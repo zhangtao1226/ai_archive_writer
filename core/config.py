@@ -7,7 +7,7 @@
 
 from pathlib import Path
 from typing import Literal
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,6 +52,14 @@ class Configs(BaseSettings):
     # 待入库的 TXT/Markdown 原始资料目录，启动时自动创建；与 Chroma 存储目录分开
     rag_source_dir: str = f"{root_path}/resources/knowledge"
     embedding_device: str = "cpu"
+
+    @field_validator("embedding_device", "reranker_device")
+    @classmethod
+    def validate_device(cls, value):
+        value = value.strip().lower()
+        if value == "gpu" or value.startswith("gpu:"):
+            raise ValueError("设备不能填写 gpu；NVIDIA GPU 请填写 cuda 或 cuda:0，CPU 请填写 cpu")
+        return value
 
     # 日志文件配置信息
     log_info: dict = {
