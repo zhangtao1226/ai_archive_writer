@@ -53,14 +53,6 @@ class Configs(BaseSettings):
     rag_source_dir: str = f"{root_path}/resources/knowledge"
     embedding_device: str = "cpu"
 
-    @field_validator("embedding_device", "reranker_device")
-    @classmethod
-    def validate_device(cls, value):
-        value = value.strip().lower()
-        if value == "gpu" or value.startswith("gpu:"):
-            raise ValueError("设备不能填写 gpu；NVIDIA GPU 请填写 cuda 或 cuda:0，CPU 请填写 cpu")
-        return value
-
     # 日志文件配置信息
     log_info: dict = {
         "log_name": "app",
