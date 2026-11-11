@@ -50,6 +50,7 @@ class Configs(BaseSettings):
     rag_timezone: str = "Asia/Shanghai"
     rag_scan_interval_seconds: int = Field(default=60, ge=1)
     # 待入库的 TXT/Markdown 原始资料目录，启动时自动创建；与 Chroma 存储目录分开
+    rag_default_category_id: str = "unassigned"  # 目录扫描没有上游分类ID时的明确占位值
     rag_source_dir: str = f"{root_path}/resources/knowledge"
     embedding_device: str = "cpu"
 

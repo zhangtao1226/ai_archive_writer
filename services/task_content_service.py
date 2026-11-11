@@ -7,7 +7,7 @@
 import json
 from datetime import datetime, timezone
 from uuid import uuid4
-from sqlalchemy import select
+from sqlalchemy import select, inspect
 from core.db import get_database_pool, orm_session
 from models.task_model import TaskModel
 from models.task_content_model import TaskContentModel
@@ -22,11 +22,16 @@ class TaskContentService:
 
     def initialize(self):
         with orm_session(self.pool, immediate=True) as session:
-            TaskContentModel.metadata.create_all(session.connection())
+            connection = session.connection()
+            TaskContentModel.metadata.create_all(connection)
+            if 'citations' not in {c['name'] for c in inspect(connection).get_columns('task_content')}:
+                connection.exec_driver_sql("ALTER TABLE task_content ADD COLUMN citations TEXT NOT NULL DEFAULT '[]'")
 
     @staticmethod
     def _decode(model):
-        return {c.name: getattr(model, c.name) for c in TaskContentModel.__table__.columns}
+        result = {c.name: getattr(model, c.name) for c in TaskContentModel.__table__.columns}
+        result['citations'] = json.loads(result['citations'])
+        return result
 
     @staticmethod
     def _query(task_id, user_id):
@@ -94,6 +99,7 @@ class TaskContentService:
                 session.delete(model)
             else:
                 model.body = body
+                model.citations = "[]"  # 修改正文后旧引用尚未重新核实
                 model.revision += 1
                 model.updated_at = datetime.now(timezone.utc).isoformat()
             return True

@@ -28,7 +28,7 @@ class KnowledgeBase:
         self.collection = self.client.get_or_create_collection(name=collection_name, embedding_function=embedding)
 
     def write(self, text: str, source: str, metadata: dict[str, Any] | None = None,
-              chunk_size: int = 800, chunk_overlap: int = 120, should_continue=None) -> int:
+              chunk_size: int = 800, chunk_overlap: int = 120, should_continue=None, return_info=False):
         """相同来源和相同分块内容重复导入时覆盖，不删除已有资料。"""
         if not source.strip():
             raise ValueError("source 不能为空")
@@ -48,6 +48,11 @@ class KnowledgeBase:
                 ids=ids[start:end], documents=chunks[start:end],
                 metadatas=[{**metadata, "source": source, "chunk_index": i}
                            for i in range(start, min(end, len(chunks)))])
+        if return_info:
+            return {"collection_name": self.collection.name, "chunk_count": len(chunks),
+                    "written_count": len(chunks), "chunk_ids": ids,
+                    "embedding_model": configs.embedding_model_path,
+                    "chunk_size": chunk_size, "chunk_overlap": chunk_overlap}
         return len(chunks)
 
     def write_file(self, file_path, **kwargs) -> int:

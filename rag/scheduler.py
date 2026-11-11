@@ -5,7 +5,8 @@
 # @Time      : 2026/11/6 10:50
 # @Software  : PyCharm
 
-from core.db import get_database_pool
+import json
+from services.material_vector_service import MaterialVectorService
 from datetime import datetime, time
 from hashlib import sha256
 from pathlib import Path
@@ -33,6 +34,7 @@ class IngestionScheduler:
             raise ValueError("start_time 与 end_time 不能相同")
         self.zone = ZoneInfo(config.rag_timezone)
         self.kb = None
+        self.records = MaterialVectorService(config.application_db_patth)
 
     def allowed(self):
         return not self.stop_event.is_set() and in_window(
@@ -62,37 +64,43 @@ class IngestionScheduler:
         if not source_dir.is_dir():
             logger.warning("知识库资料目录不存在：{}", source_dir)
             return
-        state_path = Path(self.config.knowledge_db_patth) / "ingestion_state.sqlite3"
-        with get_database_pool(state_path).connection() as state:
-            state.execute("CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, digest TEXT)")
-            for path in sorted(source_dir.rglob("*")):
-                if not self.allowed():
-                    break
-                if any(part.startswith('._') or part == '__MACOSX' for part in path.relative_to(source_dir).parts):
+        self.records.initialize()
+        signature = sha256(json.dumps({"model": self.config.embedding_model_path,
+            "chunk_size": 800, "overlap": 120, "parser_version": 1,
+            "collection": "archive_knowledge"}, sort_keys=True).encode()).hexdigest()
+        for path in sorted(source_dir.rglob("*")):
+            if not self.allowed():
+                break
+            if any(part.startswith('._') or part == '__MACOSX' for part in path.relative_to(source_dir).parts):
+                continue
+            if not path.is_file() or path.suffix.lower() not in {".txt", ".md", ".pdf", ".docx"}:
+                continue
+            record = None
+            try:
+                source = str(path.resolve())
+                data = path.read_bytes()
+                digest = sha256(data).hexdigest()
+                record = self.records.claim(source, digest, signature,
+                    getattr(self.config, 'rag_default_category_id', 'unassigned'))
+                if record is None:
                     continue
-                if not path.is_file() or path.suffix.lower() not in {".txt", ".md", ".pdf", ".docx"}:
-                    logger.warning("未读取到资料", path)
-                    continue
-                try:
-                    # 写事务串行化多个服务进程，成功后才记录内容指纹。
-                    state.execute("BEGIN IMMEDIATE")
-                    source = str(path.resolve())
-                    data = path.read_bytes()
-                    digest = sha256(data).hexdigest()
-                    row = state.execute("SELECT digest FROM files WHERE path=?", (source,)).fetchone()
-                    if row and row[0] == digest:
-                        state.rollback()
-                        continue
-                    if self.kb is None:
-                        from rag.indexing import KnowledgeBase
-                        self.kb = KnowledgeBase()
-                    if not self.allowed():
-                        state.rollback()
-                        break
-                    self.kb.write(extract_text(data, path.suffix), source=source, should_continue=self.allowed)
-                    state.execute("INSERT OR REPLACE INTO files VALUES (?, ?)", (source, digest))
-                    state.commit()
-                    logger.info("知识库入库成功：{}", source)
-                except Exception:
-                    state.rollback()
-                    logger.exception("资料入库未完成：{}", path)
+                def can_continue():
+                    return self.allowed() and self.records.active(record['id'])
+                if not can_continue():
+                    raise InterruptedError('入库窗口结束或记录被停用')
+                text = extract_text(data, path.suffix)
+                if self.kb is None:
+                    from rag.indexing import KnowledgeBase
+                    self.kb = KnowledgeBase()
+                info = self.kb.write(text, source=source, metadata={
+                    'category_id': record['category_id'], 'ingestion_id': record['id'],
+                    'content_hash': digest}, should_continue=can_continue, return_info=True)
+                self.records.finish(record['id'], 'completed', info=info)
+                logger.info(f"资料入库处理结束：{source}")
+            except InterruptedError as exc:
+                if record:
+                    self.records.finish(record['id'], 'interrupted', error=str(exc))
+            except Exception as exc:
+                if record:
+                    self.records.finish(record['id'], 'failed', error=str(exc))
+                logger.exception(f"资料入库未完成：{path}")

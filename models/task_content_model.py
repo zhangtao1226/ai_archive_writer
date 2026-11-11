@@ -17,6 +17,7 @@ class TaskContentModel(Base):
     section_id = Column(Text, nullable=False, comment='大纲节点ID')
     title = Column(Text, nullable=False, comment='章节标题快照')
     body = Column(Text, nullable=False, comment='当前正文')
+    citations = Column(Text, nullable=False, default='[]', server_default='[]', comment='实际引用资料JSON')
     model_name = Column(Text, nullable=False, default='', comment='生成模型名称')
     revision = Column(Integer, nullable=False, default=1, comment='正文修订号')
     created_at = Column(Text, nullable=False, comment='创建时间')

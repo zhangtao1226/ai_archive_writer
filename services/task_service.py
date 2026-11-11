@@ -117,6 +117,8 @@ class TaskService:
                     TaskContentModel.created_at, TaskContentModel.content_id)).all()
                 result['contents'] = [{c.name: getattr(row, c.name)
                                        for c in TaskContentModel.__table__.columns} for row in rows]
+                for content in result['contents']:
+                    content['citations'] = json.loads(content['citations'])
                 order = self._outline_order(result['task_info']['outline_snapshot'])
                 result['contents'].sort(key=lambda row: order.get(row['section_id'], len(order)))
                 result['content_count'] = len(result['contents'])
