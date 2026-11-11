@@ -27,7 +27,7 @@ def create_project(request, config):
         )
     )
 
-    saved = TaskService(config.application_db_patth).create(result)
+    saved = TaskService(config.application_db_path).create(result)
     result['updated_at'] = saved['updated_at']
     result['task_info'] = saved
 

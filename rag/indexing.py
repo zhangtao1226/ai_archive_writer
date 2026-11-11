@@ -22,7 +22,7 @@ class KnowledgeBase:
             raise FileNotFoundError(f"嵌入模型目录不存在，请配置 embedding_model_path：{configs.embedding_model_path}")
         self.reranker = reranker if reranker is not None else Reranker(
             configs.reranker_model_path, configs.reranker_device, configs.reranker_batch_size)
-        self.client = chromadb.PersistentClient(path=configs.knowledge_db_patth)
+        self.client = chromadb.PersistentClient(path=configs.knowledge_db_path)
         embedding = embedding_function if embedding_function is not None else SentenceTransformerEmbeddingFunction(
             model_name=configs.embedding_model_path, device=configs.embedding_device, normalize_embeddings=True)
         self.collection = self.client.get_or_create_collection(name=collection_name, embedding_function=embedding)

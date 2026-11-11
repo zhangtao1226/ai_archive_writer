@@ -34,7 +34,7 @@ class IngestionScheduler:
             raise ValueError("start_time 与 end_time 不能相同")
         self.zone = ZoneInfo(config.rag_timezone)
         self.kb = None
-        self.records = MaterialVectorService(config.application_db_patth)
+        self.records = MaterialVectorService(config.application_db_path)
 
     def allowed(self):
         return not self.stop_event.is_set() and in_window(

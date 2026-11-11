@@ -17,7 +17,7 @@ class TaskContentService:
     def __init__(self, db_path=None):
         if db_path is None:
             from core.config import configs
-            db_path = configs.application_db_patth
+            db_path = configs.application_db_path
         self.pool = get_database_pool(db_path)
 
     def initialize(self):

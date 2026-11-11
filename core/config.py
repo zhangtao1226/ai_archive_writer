@@ -37,11 +37,11 @@ class Configs(BaseSettings):
 
 
     # 业务数据地址
-    application_db_patth: str = f"{root_path}/resources/databases/application.db"
+    application_db_path: str = f"{root_path}/resources/databases/application.db"
     # 知识数据地址
-    knowledge_db_patth: str = f"{root_path}/resources/databases/chroma_db"
+    knowledge_db_path: str = f"{root_path}/resources/databases/chroma_db"
     # 工作流检查点与恢复状态数据地址
-    checkpoint_db_patth: str = f"{root_path}/resources/databases/checkpoint.db"
+    checkpoint_db_path: str = f"{root_path}/resources/databases/checkpoint.db"
 
     # 入库时间设置（北京时间，支持跨午夜，例如 23:00 到 06:00）
     rag_scheduler_enabled: bool = False

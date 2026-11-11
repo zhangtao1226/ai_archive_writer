@@ -21,7 +21,7 @@ from services.generation_output import parse_output
 class GenerationWorker:
     def __init__(self, config):
         self.config = config
-        self.pool = get_database_pool(config.application_db_patth)
+        self.pool = get_database_pool(config.application_db_path)
         self.stop_event = Event()
         self.thread = Thread(target=self.run, name='research-generation')
         self.kb = None
