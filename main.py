@@ -5,29 +5,38 @@
 # @Time      : 2026/11/3 17:19
 # @Software  : PyCharm
 
-from contextlib import asynccontextmanager
 import asyncio
-from fastapi import FastAPI, Request
+from queue import Queue, Empty
+from threading import Event, Thread
+from contextlib import asynccontextmanager
+from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request, Depends, HTTPException
+from pydantic import ValidationError
+from sqlite3 import Error as SQLiteError
+from sqlalchemy.exc import SQLAlchemyError
+
+
 from core.config import configs
 from core.db import close_database_pools
-from rag.scheduler import IngestionScheduler
-
-
 from core.LoggerDetector import logger
 from core.ResponseUtil import ResponseUtil
-from pydantic import ValidationError
-from sqlalchemy.exc import SQLAlchemyError
-from sqlite3 import Error as SQLiteError
+from rag.scheduler import IngestionScheduler
 from schemas.EditingResearchRequest import EditingResearchRequest
+from schemas.ChatRequest import ChatRequest
+from services.chat_stream import sse
 from services.project_service import create_project
 from services.task_service import TaskService
 from services.task_content_service import TaskContentService
+from services.chat_service import ChatService
 from services.generation_service import GenerationWorker
 
 @asynccontextmanager
 async def lifespan(app):
+    """初始化数据库和后台任务，退出时等待任务结束并关闭连接池。"""
     await asyncio.to_thread(TaskService().initialize)
     await asyncio.to_thread(TaskContentService().initialize)
+    app.state.chat_service = ChatService(configs)
+    await asyncio.to_thread(app.state.chat_service.initialize)
     worker = GenerationWorker(configs)
     worker.start()
     scheduler = IngestionScheduler(configs) if configs.rag_scheduler_enabled else None
@@ -53,12 +62,14 @@ app = FastAPI(lifespan=lifespan, title="AI 档案编研系统",
 
 @app.get("/")
 async def health_check():
+    """返回服务存活状态。"""
     message = "服务正在运行中·······"
     logger.info(f"检查服务运行状态: {message}")
     return ResponseUtil.success(message=message)
 
 @app.post("/v1/editing_research")
 async def editing_research(request: Request):
+    """校验并保存立项请求，将任务加入持久化生成队列。"""
     try:
         json_data = await request.json()
     except ValueError:
@@ -93,6 +104,7 @@ async def editing_research(request: Request):
 
 @app.get("/v1/tasks_info/{task_id}")
 async def get_tasks_info(task_id: str):
+    """根据任务ID返回状态以及完成后的正文和引用。"""
     if not task_id.strip():
         return ResponseUtil.error(code=422, message="task_id 不能为空")
     try:
@@ -107,8 +119,106 @@ async def get_tasks_info(task_id: str):
         return ResponseUtil.error(code=404, message="任务不存在")
     return ResponseUtil.success(data=result, message=result['status'])
 
-# 对话接口
 
+def chat_user(request: Request):
+    """读取认证中间件提供的用户身份，未认证时拒绝访问。"""
+    # 由认证中间件设置，禁止将客户端随意填写的 user_id 当作身份。
+    user_id = getattr(request.state, 'user_id', None)
+    if not isinstance(user_id, str) or not user_id:
+        raise HTTPException(status_code=401, detail="请先接入登录认证并设置 request.state.user_id")
+    return user_id
+
+
+async def call_chat_service(request, method, *args):
+    """在线程中调用同步服务并统一转换业务异常。"""
+    try:
+        result = await asyncio.to_thread(getattr(request.app.state.chat_service, method), *args)
+        return ResponseUtil.success(data=result)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        return ResponseUtil.error(code=409, message=str(exc))
+    except Exception:
+        logger.exception("章节对话处理失败")
+        return ResponseUtil.error(code=503, message="对话服务暂不可用，请稍后重试")
+
+
+@app.post("/v1/chat")
+async def chat(payload: ChatRequest, request: Request):
+    queue = Queue(maxsize=128)
+    cancelled = Event()
+
+    def emit(event, data):
+        from queue import Full
+        while not cancelled.is_set():
+            try:
+                queue.put((event, data), timeout=0.2)
+                return
+            except Full:
+                continue
+        raise InterruptedError('客户端已断开')
+
+    def generate():
+        """在线程中运行同步检索及推理，异常转为 SSE error。"""
+        try:
+            result = request.app.state.chat_service.chat(payload, user_id, emit, cancelled)
+            emit('done' if result['status'] == 'completed' else 'status', result)
+        except Exception:
+            logger.exception('流式对话失败')
+            if not cancelled.is_set():
+                emit('error', {'message':'生成失败，请查询历史记录或稍后重试'})
+
+    async def events():
+        """发送开始事件、正文片段和心跳；退出时通知生成线程取消。"""
+        thread = Thread(target=generate, name='chat-stream')
+        thread.start()
+        try:
+            yield sse(
+                'start',
+                {
+                    'conversation_id':payload.conversation_id,
+                    'request_id':payload.request_id,
+                    'section_id':payload.section_id
+                }
+            )
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event, data = await asyncio.to_thread(queue.get, True, 10)
+                except Empty:
+                    yield ': heartbeat\n\n'
+                    continue
+                yield sse(event, data)
+                if event in ('done', 'error', 'status'):
+                    break
+        finally:
+            cancelled.set()
+            await asyncio.to_thread(thread.join)
+
+    return StreamingResponse(
+        events(),
+        media_type='text/event-stream',
+        headers={'Cache-Control':'no-cache', 'X-Accel-Buffering':'no'}
+    )
+
+
+@app.post("/v1/tasks/{task_id}/sections/{section_id}/conversations")
+async def create_conversation(task_id: str, section_id: str, request: Request, user_id: str = Depends(chat_user)):
+    """创建属于登录用户的章节会话。"""
+    return await call_chat_service(request, 'create_conversation', task_id, section_id, user_id)
+
+
+@app.get("/v1/conversations/{conversation_id}/messages")
+async def chat_history(conversation_id: str, request: Request, after: int = 0, limit: int = 50, user_id: str = Depends(chat_user)):
+    """分页返回指定会话的历史消息。"""
+    return await call_chat_service(request, 'history', conversation_id, user_id, after, limit)
+
+
+@app.post("/v1/chat/proposals/{proposal_id}/apply")
+async def apply_proposal(proposal_id: str, request: Request, user_id: str = Depends(chat_user)):
+    """应用AI建议，服务层同时校验章节权限及正文版本。"""
+    return await call_chat_service(request, 'apply', proposal_id, user_id)
 
 
 if __name__ == '__main__':

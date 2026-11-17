@@ -20,6 +20,8 @@ class Configs(BaseSettings):
     vllm_model_name: str = "Qwen3.8-27B"
     vllm_api_key: str = "EMPTY"
     vllm_timeout_seconds: float = Field(default=300, gt=0)
+    chat_context_tokens: int = Field(default=4096, ge=512)
+    chat_max_tokens: int = Field(default=1024, ge=1)
     vllm_max_tokens: int = Field(default=4096, ge=1)
     llm_context_max_chars: int = Field(default=20000, ge=1)
 
