@@ -9,7 +9,7 @@ import json
 from typing import Literal
 
 
-PROMPT_VERSION = "1.0.0"
+PROMPT_VERSION = "1.1.0"
 
 COMMON_RULES = """
 你是档案编研助手。
@@ -38,6 +38,8 @@ SCENE_RULES = {
     "generate": """
 根据立项要求、目录大纲和参考资料，撰写当前章节正文。
 保持章节主题与层级，不重复生成整篇目录。
+遵循当前章节的 title_path 和 writing_requirements；父章节仅写导语时，不展开子章节正文。
+目录ID、标题与层级由后端维护，不在输出中重新生成或修改目录树。
 区分档案原文摘录与编研说明文字。
 """.strip(),
 

@@ -73,6 +73,15 @@ class Catalog(BaseModel):
         return self
 
 
+class DirectoryNode(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    node_id: Text
+    node_title: Text
+    content: str = ''
+    children: list['DirectoryNode'] = Field(default_factory=list)
+    generate_content: bool = True
+
+
 class EditingResearchRequest(BaseModel):
     model_config = ConfigDict(strict=True, str_strip_whitespace=True, extra='forbid')
     user_id: Text
@@ -80,10 +89,24 @@ class EditingResearchRequest(BaseModel):
     type: Text
     person: Text = Field(description='责任人用户 ID，不参与语义检索')
     group: Text
-    directory_template: Text
+    directory_template: list[DirectoryNode] = Field(min_length=1)
     time_range: str = Field(default='', max_length=200)
     description: str = Field(default='', max_length=10000)
 
     # 可选请求快照：原样保存，不查询服务端目录或校验业务关系。
     group_snapshot: dict = Field(default_factory=dict)
     outline_snapshot: dict = Field(default_factory=dict)
+
+    @model_validator(mode='after')
+    def validate_directory(self):
+        seen = set()
+        stack = [(node, 1) for node in self.directory_template]
+        while stack:
+            node, depth = stack.pop()
+            if node.node_id in seen:
+                raise ValueError('目录节点 ID 必须全局唯一')
+            seen.add(node.node_id)
+            if depth > 20 or len(seen) > 500:
+                raise ValueError('目录最多20层、500个节点')
+            stack.extend((child, depth + 1) for child in node.children)
+        return self
