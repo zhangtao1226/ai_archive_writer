@@ -6,6 +6,7 @@
 # @Software  : PyCharm
 
 import json
+from services.citation_codec import decode_citations
 from datetime import datetime, timezone
 from sqlalchemy import select, inspect, Table, MetaData
 from core.db import get_database_pool, orm_session
@@ -137,7 +138,7 @@ class TaskService:
                 result['contents'] = [{c.name: getattr(row, c.name)
                                        for c in TaskContentModel.__table__.columns} for row in rows]
                 for content in result['contents']:
-                    content['citations'] = json.loads(content['citations'])
+                    content['citations'] = decode_citations(content['citations'])
                     if result['task_info']['outline_snapshot'].get('direction_model') == 'single_node':
                         content['table'] = json.loads(content['body'])
                 order = self._outline_order(result['task_info']['outline_snapshot'])

@@ -5,6 +5,7 @@
 # @Time      : 2026/11/6 10:50
 # @Software  : PyCharm
 import json
+from services.citation_codec import decode_citations
 from datetime import datetime, timezone
 from uuid import uuid4
 from sqlalchemy import select, inspect
@@ -30,7 +31,7 @@ class TaskContentService:
     @staticmethod
     def _decode(model):
         result = {c.name: getattr(model, c.name) for c in TaskContentModel.__table__.columns}
-        result['citations'] = json.loads(result['citations'])
+        result['citations'] = decode_citations(result['citations'])
         return result
 
     @staticmethod
