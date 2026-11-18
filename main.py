@@ -25,7 +25,8 @@ from schemas.EditingResearchRequest import EditingResearchRequest
 from schemas.ChatRequest import ChatRequest
 from services.chat_stream import sse
 from services.project_service import create_project
-from services.task_service import TaskService
+from services.research_parameter_adapter import normalize_research_request
+from services.task_service import TaskService, DuplicateTaskError
 from services.task_content_service import TaskContentService
 from services.chat_service import ChatService
 from services.generation_service import GenerationWorker
@@ -77,7 +78,18 @@ async def editing_research(request: Request):
     if not isinstance(json_data, dict):
         return ResponseUtil.error(code=422, message="请求体必须是 JSON 对象")
 
-    required = ("user_id", "title", "type", "person", "group", "directory_template")
+    is_new_format = 'direction_model' in json_data
+    try:
+        context = {key: getattr(request.state, key, None) for key in ('user_id', 'person', 'group')}
+        json_data = normalize_research_request(json_data, context)
+    except ValidationError as exc:
+        return ResponseUtil.error(code=422, message="立项参数校验失败",
+            details={"errors": exc.errors(include_context=False, include_input=False)})
+    except ValueError as exc:
+        return ResponseUtil.error(code=422, message=str(exc))
+
+    required = ("taskid", "title", "type", "directory_template") if is_new_format else (
+        "user_id", "title", "type", "person", "group", "directory_template")
     missing = [key for key in required if key not in json_data or json_data[key] is None
                or (isinstance(json_data[key], str) and not json_data[key].strip())]
     if missing:
@@ -92,6 +104,8 @@ async def editing_research(request: Request):
         )
     try:
         project = await asyncio.to_thread(create_project, parameters, configs)
+    except DuplicateTaskError as exc:
+        return ResponseUtil.error(code=409, message=str(exc))
     except (SQLAlchemyError, SQLiteError, TimeoutError):
         logger.exception("编研立项保存失败")
         return ResponseUtil.error(code=503, message="立项保存失败，请稍后重试")

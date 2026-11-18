@@ -15,8 +15,8 @@ from core.db import get_database_pool, orm_session
 from core.LoggerDetector import logger
 from models.task_model import TaskModel
 from models.task_content_model import TaskContentModel
-from services.generation_output import parse_output
-from prompts.prompt_template import build_messages, build_sources, PROMPT_VERSION
+from services.generation_output import parse_output, parse_table_output
+from prompts.prompt_template import build_messages, build_sources, PROMPT_VERSION, build_table_messages
 
 
 class GenerationWorker:
@@ -96,6 +96,17 @@ class GenerationWorker:
                                  'writing_requirements': node.get('writing_requirements', '')},
                         hits=selected,
                     )
+                    is_table = outline.get('direction_model') == 'single_node'
+                    if is_table:
+                        messages = build_table_messages(
+                            {
+                                'title': task['title'],
+                                'description': task['description'],
+                                'time_range': task['time_range']
+                            },
+                            outline['columns'],
+                            selected
+                        )
                     logger.info(f"生成节点 task_id={task['task_id']} node_id={node['id']} prompt_version={PROMPT_VERSION}")
                     response = client.post(self.config.vllm_base_url.rstrip('/') + '/chat/completions',
                         headers={'Authorization': 'Bearer ' + self.config.vllm_api_key},
@@ -106,7 +117,10 @@ class GenerationWorker:
                     choice = response.json()['choices'][0]
                     if choice.get('finish_reason') != 'stop':
                         raise ValueError(f"生成未正常完成：{choice.get('finish_reason')}")
-                    body, citations = parse_output(choice['message']['content'], selected)
+                    if is_table:
+                        body, citations = parse_table_output(choice['message']['content'], selected, outline['columns'])
+                    else:
+                        body, citations = parse_output(choice['message']['content'], selected)
                     self.save_node(task, node, body, citations, self.config.vllm_model_name)
             with orm_session(self.pool, immediate=True) as session:
                 current = session.get(TaskModel, task['task_id'])

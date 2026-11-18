@@ -84,11 +84,13 @@ class DirectoryNode(BaseModel):
 
 class EditingResearchRequest(BaseModel):
     model_config = ConfigDict(strict=True, str_strip_whitespace=True, extra='forbid')
-    user_id: Text
+    # 新接口允许缺省身份信息；旧接口仍在入口校验必填字段。
+    taskid: Text | None = None
+    user_id: Text | None = None
     title: Text
     type: Text
-    person: Text = Field(description='责任人用户 ID，不参与语义检索')
-    group: Text
+    person: Text | None = Field(default=None, description='责任人用户 ID，不参与语义检索')
+    group: Text | None = None
     directory_template: list[DirectoryNode] = Field(min_length=1)
     time_range: str = Field(default='', max_length=200)
     description: str = Field(default='', max_length=10000)

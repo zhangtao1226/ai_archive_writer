@@ -12,6 +12,10 @@ from core.db import get_database_pool, orm_session
 from models.task_model import TaskModel
 
 
+class DuplicateTaskError(ValueError):
+    """调用方指定的任务 ID 已存在，禁止覆盖或重新排队。"""
+
+
 class TaskService:
     def __init__(self, db_path=None):
         if db_path is None:
@@ -26,10 +30,15 @@ class TaskService:
     @staticmethod
     def _model(record):
         p = record['parameters']
+        # 兼容已有 NOT NULL 文本列：空字符串表示未提供，不伪造用户或小组。
         return TaskModel(
-            task_id=record.get('task_id') or record['project_id'], user_id=p['user_id'],
-            title=p['title'], research_type=p['type'], responsible_user_id=p['person'],
-            group=p['group'], directory_template=json.dumps(p['directory_template'], ensure_ascii=False),
+            task_id=record.get('task_id') or record['project_id'],
+            user_id=p.get('user_id') or '',
+            title=p['title'],
+            research_type=p['type'],
+            responsible_user_id=p.get('person') or '',
+            group=p.get('group') or '',
+            directory_template=json.dumps(p['directory_template'], ensure_ascii=False),
             time_range=p.get('time_range', ''), description=p.get('description', ''),
             status=record['status'], retrieval_query=record.get('retrieval_query', ''),
             group_snapshot=json.dumps(record['group_snapshot'], ensure_ascii=False),
@@ -38,8 +47,10 @@ class TaskService:
 
     def create(self, record):
         self.initialize()
-        with orm_session(self.pool) as session:
+        with orm_session(self.pool, immediate=True) as session:
             model = self._model(record)
+            if session.get(TaskModel, model.task_id) is not None:
+                raise DuplicateTaskError(f"taskid 已存在: {model.task_id}，请查询已有任务；新立项请使用新的 taskid")
             session.add(model)
             session.flush()
             saved = self._decode(model)
@@ -127,6 +138,8 @@ class TaskService:
                                        for c in TaskContentModel.__table__.columns} for row in rows]
                 for content in result['contents']:
                     content['citations'] = json.loads(content['citations'])
+                    if result['task_info']['outline_snapshot'].get('direction_model') == 'single_node':
+                        content['table'] = json.loads(content['body'])
                 order = self._outline_order(result['task_info']['outline_snapshot'])
                 result['contents'].sort(key=lambda row: order.get(row['section_id'], len(order)))
                 from services.outline_service import fill

@@ -32,3 +32,25 @@ def parse_output(content, hits):
                           'text': hit['text'], 'metadata': hit.get('metadata') or {},
                           'distance': hit.get('distance'), 'rerank_score': hit.get('rerank_score')})
     return body.strip(), citations
+
+
+def parse_table_output(content, hits, columns):
+    data = json.loads(content)
+    if not isinstance(data, dict) or set(data) != {'rows'} or not isinstance(data['rows'], list):
+        raise ValueError('大事记必须返回 rows 数组')
+    rows, all_citations = [], {}
+    for index, row in enumerate(data['rows'], 1):
+        if not isinstance(row, dict) or set(row) != {'cells', 'citation_ids'}:
+            raise ValueError('大事记行结构无效')
+        cells = row['cells']
+        expected = set(columns) - {'序号'}
+        if not isinstance(cells, dict) or set(cells) != expected or any(not isinstance(v, str) or not v.strip() for v in cells.values()):
+            raise ValueError('大事记列名或单元格内容无效')
+        if not row['citation_ids']:
+            raise ValueError('大事记事件必须有引用依据')
+        _, citations = parse_output(json.dumps({'body':' '.join(cells.values()),
+            'citation_ids':row['citation_ids']}, ensure_ascii=False), hits)
+        ordered = {key: str(index) if key == '序号' else cells[key] for key in columns}
+        rows.append({'cells': ordered, 'citations': citations})
+        all_citations.update({c['citation_id']:c for c in citations})
+    return json.dumps({'format':'chronology_table', 'columns':columns, 'rows':rows}, ensure_ascii=False), list(all_citations.values())
