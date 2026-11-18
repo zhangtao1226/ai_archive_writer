@@ -29,7 +29,7 @@ class TaskService:
         return TaskModel(
             task_id=record.get('task_id') or record['project_id'], user_id=p['user_id'],
             title=p['title'], research_type=p['type'], responsible_user_id=p['person'],
-            group=p['group'], directory_template=p['directory_template'],
+            group=p['group'], directory_template=json.dumps(p['directory_template'], ensure_ascii=False),
             time_range=p.get('time_range', ''), description=p.get('description', ''),
             status=record['status'], retrieval_query=record.get('retrieval_query', ''),
             group_snapshot=json.dumps(record['group_snapshot'], ensure_ascii=False),
@@ -105,11 +105,19 @@ class TaskService:
             task = session.get(TaskModel, task_id)
             if task is None:
                 return None
-            labels = {'created': '任务进行中', 'queued': '任务进行中',
-                      'running': '任务进行中', 'completed': '任务已完成',
-                      'failed': '任务失败', 'cancelled': '任务已取消'}
-            result = {'task_id': task.task_id, 'status': labels.get(task.status, '任务状态未知'),
-                      'status_code': task.status}
+            labels = {
+                'created': '任务进行中',
+                'queued': '任务进行中',
+                'running': '任务进行中',
+                'completed': '任务已完成',
+                'failed': '任务失败',
+                'cancelled': '任务已取消'
+            }
+            result = {
+                'task_id': task.task_id,
+                'status': labels.get(task.status, '任务状态未知'),
+                'status_code': task.status
+            }
             if task.status == 'completed':
                 result['task_info'] = self._decode(task)
                 rows = session.scalars(select(TaskContentModel).where(
@@ -121,6 +129,9 @@ class TaskService:
                     content['citations'] = json.loads(content['citations'])
                 order = self._outline_order(result['task_info']['outline_snapshot'])
                 result['contents'].sort(key=lambda row: order.get(row['section_id'], len(order)))
+                from services.outline_service import fill
+                tree = result['task_info']['outline_snapshot'].get('tree', [])
+                result['directory_template'] = fill(tree, result['contents'])
                 result['content_count'] = len(result['contents'])
                 result['has_content'] = bool(result['contents'])
             return result

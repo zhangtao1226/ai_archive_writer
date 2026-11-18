@@ -6,19 +6,21 @@
 # @Software  : PyCharm
 
 from services.task_service import TaskService
+from services.outline_service import flatten
 from uuid import uuid4
 from datetime import datetime, timezone
 from rag.query_builder import build_retrieval_query
 
 
 def create_project(request, config):
+    tree = [node.model_dump() for node in request.directory_template]
     result = dict(
         task_id=str(uuid4()),
         status='queued',
         created_at=datetime.now(timezone.utc).isoformat(),
         parameters=request.model_dump(),
         group_snapshot=request.group_snapshot,
-        outline_snapshot=request.outline_snapshot,
+        outline_snapshot={'tree': tree, 'nodes': flatten(tree)},
         retrieval_query=build_retrieval_query(
             title=request.title,
             type=request.type,

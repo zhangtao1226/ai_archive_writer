@@ -28,12 +28,12 @@ class Configs(BaseSettings):
     # 推理模型路径
     llm_model_path: str = f"{root_path}/resources/models/"
     #嵌入模型路径
-    embedding_model_path: str = f"{root_path}/resources/embeddings/Embedding_model"
+    embedding_model_path: str = f"{root_path}/resources/models/embeddings/Embedding_model"
 
     # 两阶段检索：先召回候选，再用交叉编码器重排序
     rag_rerank_enabled: bool = True
     rag_initial_k: int = Field(default=20, ge=1)
-    reranker_model_path: str = "BAAI/bge-reranker-v2-m3"
+    reranker_model_path: str = f"{root_path}/resources/models/BAAI/bge-reranker-v2-m3"
     reranker_device: str = "cpu"
     reranker_batch_size: int = Field(default=16, ge=1)
 
