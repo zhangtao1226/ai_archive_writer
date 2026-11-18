@@ -146,6 +146,15 @@ class TaskService:
                 from services.outline_service import fill
                 tree = result['task_info']['outline_snapshot'].get('tree', [])
                 result['directory_template'] = fill(tree, result['contents'])
+                if result['task_info']['outline_snapshot'].get('direction_model') == 'single_node':
+                    from services.table_result import table_to_nodes
+                    if len(result['contents']) != 1:
+                        raise ValueError('大事记应包含一个完整表格结果')
+                    result['direction_model'] = 'single_node'
+                    result['taskid'] = task.task_id
+                    result['nodes'] = table_to_nodes(result['contents'][0]['table'])
+                    result['directory_template'] = result['nodes']
+                    result['contents'][0]['nodes'] = result['nodes']
                 result['content_count'] = len(result['contents'])
                 result['has_content'] = bool(result['contents'])
             return result

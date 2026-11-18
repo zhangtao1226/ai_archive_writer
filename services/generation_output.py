@@ -36,6 +36,32 @@ def parse_output(content, hits):
 
 def parse_table_output(content, hits, columns):
     data = json.loads(content)
+    if isinstance(data, dict) and 'nodes' in data:
+        nodes = data['nodes']
+        if set(data) != {'nodes'} or not isinstance(nodes, list) or len(nodes) != len(columns):
+            raise ValueError('大事记 nodes 必须与表头列数一致')
+        length = None
+        for title, node in zip(columns, nodes):
+            if not isinstance(node, dict) or set(node) != {'title', 'level', 'content', 'source'}:
+                raise ValueError('大事记列结构无效')
+            if node['title'] != title or type(node['level']) is not int or node['level'] != 1:
+                raise ValueError('大事记列名、顺序或层级不匹配')
+            values, sources = node['content'], node['source']
+            if not isinstance(values, list) or not isinstance(sources, list) or len(values) != len(sources):
+                raise ValueError('大事记 content/source 必须为等长数组')
+            if length is None:
+                length = len(values)
+            if len(values) != length:
+                raise ValueError('大事记所有列的 content 长度必须一致')
+            if title == '序号' and any(type(v) is not int or v != i for i, v in enumerate(values, 1)):
+                raise ValueError('序号必须为从1开始的连续整数')
+            for ids in sources:
+                if not isinstance(ids, list) or any(type(i) is not int or not 1 <= i <= len(hits) for i in ids):
+                    raise ValueError('大事记 source 引用编号无效')
+        data = {'rows': [
+            {'cells': {n['title']: n['content'][i] for n in nodes if n['title'] != '序号'},
+             'citation_ids': list(dict.fromkeys(cid for n in nodes for cid in n['source'][i]))}
+            for i in range(length or 0)]}
     if not isinstance(data, dict) or set(data) != {'rows'} or not isinstance(data['rows'], list):
         raise ValueError('大事记必须返回 rows 数组')
     rows, all_citations = [], {}
