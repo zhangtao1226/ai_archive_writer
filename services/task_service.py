@@ -7,6 +7,7 @@
 
 import json
 from services.citation_codec import decode_citations
+from services.research_mode import resolve_research_mode
 from datetime import datetime, timezone
 from sqlalchemy import select, inspect, Table, MetaData
 from core.db import get_database_pool, orm_session
@@ -132,6 +133,7 @@ class TaskService:
             }
             if task.status == 'completed':
                 result['task_info'] = self._decode(task)
+                mode, columns = resolve_research_mode(result['task_info']['outline_snapshot'], task.research_type)
                 rows = session.scalars(select(TaskContentModel).where(
                     TaskContentModel.task_id == task_id).order_by(
                     TaskContentModel.created_at, TaskContentModel.content_id)).all()
@@ -139,14 +141,16 @@ class TaskService:
                                        for c in TaskContentModel.__table__.columns} for row in rows]
                 for content in result['contents']:
                     content['citations'] = decode_citations(content['citations'])
-                    if result['task_info']['outline_snapshot'].get('direction_model') == 'single_node':
+                    if mode == 'single_node':
                         content['table'] = json.loads(content['body'])
+                        if not isinstance(content['table'], dict) or content['table'].get('columns') != columns:
+                            raise ValueError('已保存的大事记内容不是匹配表头的表格，需要重新生成')
                 order = self._outline_order(result['task_info']['outline_snapshot'])
                 result['contents'].sort(key=lambda row: order.get(row['section_id'], len(order)))
                 from services.outline_service import fill
                 tree = result['task_info']['outline_snapshot'].get('tree', [])
                 result['directory_template'] = fill(tree, result['contents'])
-                if result['task_info']['outline_snapshot'].get('direction_model') == 'single_node':
+                if mode == 'single_node':
                     from services.table_result import table_to_nodes
                     if len(result['contents']) != 1:
                         raise ValueError('大事记应包含一个完整表格结果')

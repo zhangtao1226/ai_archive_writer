@@ -15,6 +15,7 @@ from core.db import get_database_pool, orm_session
 from core.LoggerDetector import logger
 from models.task_model import TaskModel
 from models.task_content_model import TaskContentModel
+from services.research_mode import resolve_research_mode
 from services.generation_output import parse_output, parse_table_output
 from prompts.prompt_template import build_messages, build_sources, PROMPT_VERSION, build_table_messages
 
@@ -57,6 +58,10 @@ class GenerationWorker:
     def process(self, task):
         try:
             outline = json.loads(task['outline_snapshot'])
+            mode, columns = resolve_research_mode(outline, task['research_type'])
+            is_table = mode == 'single_node'
+            outline['columns'] = columns
+            logger.info(f"编研生成路由 task_id={task['task_id']} direction_model={mode} columns={columns}")
             nodes = [n for n in outline.get('nodes', []) if n.get('generate_body') or n.get('content', '').strip()]
             if not nodes:
                 nodes = [{'id': 'document', 'title': task['title'], 'writing_requirements': task['directory_template']}]
@@ -96,7 +101,6 @@ class GenerationWorker:
                                  'writing_requirements': node.get('writing_requirements', '')},
                         hits=selected,
                     )
-                    is_table = outline.get('direction_model') == 'single_node'
                     if is_table:
                         messages = build_table_messages(
                             {

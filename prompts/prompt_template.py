@@ -130,6 +130,19 @@ source 为与 content 等长的数组，其中每项是支持该事件的参考�
 禁止输出 body、rows、children，禁止把整张表放进一个字符串或一个节点。"""
 
 def build_table_messages(project, columns, hits):
-    return [{'role':'system', 'content':TABLE_RULES},
-            {'role':'user', 'content':json.dumps({'立项信息':project, '列名':columns,
-                '参考资料':build_sources(hits)}, ensure_ascii=False)}]
+    return [
+        {
+            'role':'system',
+            'content':TABLE_RULES
+        },
+        {
+            'role':'user',
+            'content':json.dumps(
+                {
+                        '立项信息':project,
+                        '列名':columns,
+                        '参考资料':build_sources(hits)
+                }, ensure_ascii=False
+            )
+        }
+    ]
