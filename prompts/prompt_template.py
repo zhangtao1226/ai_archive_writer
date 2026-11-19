@@ -9,7 +9,7 @@ import json
 from typing import Literal
 
 
-PROMPT_VERSION = "1.2.0"
+PROMPT_VERSION = "1.3.0"
 
 COMMON_RULES = """
 你是档案编研助手。
@@ -127,6 +127,11 @@ TABLE_RULES = """你是档案编研助手。仅输出最终中文 JSON，不输�
 序号为从1开始的整数；其他单元格为中文字符串，日期可用日期字符串。
 source 为与 content 等长的数组，其中每项是支持该事件的参考资料编号列表，禁止编造引用正文或编号。
 每行至少一个非空引用编号列表。无可核实事件时仍返回所有列，各列 content/source 为 []。
+不要凑行数，不生成空字符串占位行，不根据示例固定生成两行或五行。
+每个列节点必须完整包含 title、level、content、source 四个字段，任何一列都不能遗漏 source。
+仅收录资料明确支持且符合时间范围的具体事件；一般业务知识不能改写成指定年份发生的事件。
+如果没有符合时间范围的事件，所有列都返回 content: []、source: []，不得填入其他年份事件。
+日期确实不详且未限制时间范围时可注明“日期不详”；限制时间范围时不能用日期不详规避时间要求。
 禁止输出 body、rows、children，禁止把整张表放进一个字符串或一个节点。"""
 
 def build_table_messages(project, columns, hits):

@@ -43,12 +43,16 @@ def parse_table_output(content, hits, columns):
         length = None
         for title, node in zip(columns, nodes):
             if not isinstance(node, dict) or set(node) != {'title', 'level', 'content', 'source'}:
-                raise ValueError('大事记列结构无效')
+                keys = set(node) if isinstance(node, dict) else set()
+                required = {'title', 'level', 'content', 'source'}
+                raise ValueError(f'大事记列 {title!r} 结构无效，缺少字段={sorted(required-keys)}，多余字段={sorted(keys-required)}')
             if node['title'] != title or type(node['level']) is not int or node['level'] != 1:
                 raise ValueError('大事记列名、顺序或层级不匹配')
             values, sources = node['content'], node['source']
             if not isinstance(values, list) or not isinstance(sources, list) or len(values) != len(sources):
                 raise ValueError('大事记 content/source 必须为等长数组')
+            if title != '序号' and any(not isinstance(v, str) or not v.strip() for v in values):
+                raise ValueError(f'大事记列 {title!r} 含空白或非字符串单元格，禁止占位行')
             if length is None:
                 length = len(values)
             if len(values) != length:

@@ -16,6 +16,7 @@ from core.LoggerDetector import logger
 from models.task_model import TaskModel
 from models.task_content_model import TaskContentModel
 from services.research_mode import resolve_research_mode
+from services.table_generation import generate_table
 from services.generation_output import parse_output, parse_table_output
 from prompts.prompt_template import build_messages, build_sources, PROMPT_VERSION, build_table_messages
 
@@ -112,18 +113,25 @@ class GenerationWorker:
                             selected
                         )
                     logger.info(f"生成节点 task_id={task['task_id']} node_id={node['id']} prompt_version={PROMPT_VERSION}")
-                    response = client.post(self.config.vllm_base_url.rstrip('/') + '/chat/completions',
-                        headers={'Authorization': 'Bearer ' + self.config.vllm_api_key},
-                        json={'model': self.config.vllm_model_name, 'messages': messages, 'max_tokens':self.config.vllm_max_tokens,
-                            'chat_template_kwargs': {'enable_thinking': False},
-                            'response_format': {'type': 'json_object'}})
-                    response.raise_for_status()
-                    choice = response.json()['choices'][0]
-                    if choice.get('finish_reason') != 'stop':
-                        raise ValueError(f"生成未正常完成：{choice.get('finish_reason')}")
+                    def request_choice(request_messages):
+                        response = client.post(self.config.vllm_base_url.rstrip('/') + '/chat/completions',
+                            headers={'Authorization': 'Bearer ' + self.config.vllm_api_key},
+                            json={
+                                'model': self.config.vllm_model_name,
+                                'messages': request_messages,
+                                'max_tokens': self.config.vllm_max_tokens,
+                                'chat_template_kwargs': {'enable_thinking': False},
+                                'response_format': {'type': 'json_object'}
+                            }
+                        )
+                        response.raise_for_status()
+                        return response.json()['choices'][0]
                     if is_table:
-                        body, citations = parse_table_output(choice['message']['content'], selected, outline['columns'])
+                        body, citations = generate_table(request_choice, messages, selected, columns, task['task_id'])
                     else:
+                        choice = request_choice(messages)
+                        if choice.get('finish_reason') != 'stop':
+                            raise ValueError(f"生成未正常完成：{choice.get('finish_reason')}")
                         body, citations = parse_output(choice['message']['content'], selected)
                     self.save_node(task, node, body, citations, self.config.vllm_model_name)
             with orm_session(self.pool, immediate=True) as session:
