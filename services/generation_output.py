@@ -34,6 +34,18 @@ def parse_output(content, hits):
     return body.strip(), citations
 
 
+def validate_table_language(cells):
+    """表格允许英文专名；说明列需中文，不比较字母与汉字数量。"""
+    text = ' '.join(cells.values())
+    if re.search(r'<\/?think\b|thinking process|analysis:', text, re.I):
+        raise ValueError('表格仍返回思考过程')
+    descriptions = [value for title, value in cells.items()
+                    if any(word in title for word in ('详情', '说明', '内容', '描述', '摘要'))]
+    targets = descriptions or [text]
+    if any(not re.search(r'[\u4e00-\u9fff]', value) for value in targets):
+        raise ValueError('事件说明需使用中文，产品名称和缩写可保留英文')
+
+
 def parse_table_output(content, hits, columns):
     data = json.loads(content)
     if isinstance(data, dict) and 'nodes' in data:
@@ -49,23 +61,42 @@ def parse_table_output(content, hits, columns):
             if node['title'] != title or type(node['level']) is not int or node['level'] != 1:
                 raise ValueError('大事记列名、顺序或层级不匹配')
             values, sources = node['content'], node['source']
-            if not isinstance(values, list) or not isinstance(sources, list) or len(values) != len(sources):
-                raise ValueError('大事记 content/source 必须为等长数组')
+            if not isinstance(values, list) or not isinstance(sources, list):
+                raise ValueError(f'列 {title!r} 的 content/source 必须是数组，实际类型为 {type(values).__name__}/{type(sources).__name__}')
+            # 明确的空数组表示整列未引用，不伪造、不丢弃任何引用。
+            if not sources:
+                sources = [[] for _ in values]
+                node['source'] = sources
+            if len(values) != len(sources):
+                raise ValueError(f'列 {title!r} 的 content/source 长度不一致：{len(values)}/{len(sources)}，非空引用不能自动补齐或截断')
             if title != '序号' and any(not isinstance(v, str) or not v.strip() for v in values):
                 raise ValueError(f'大事记列 {title!r} 含空白或非字符串单元格，禁止占位行')
             if length is None:
                 length = len(values)
             if len(values) != length:
                 raise ValueError('大事记所有列的 content 长度必须一致')
-            if title == '序号' and any(type(v) is not int or v != i for i, v in enumerate(values, 1)):
-                raise ValueError('序号必须为从1开始的连续整数')
+            if title == '序号':
+                # 展示序号由后端维护，不依赖模型的数字类型或编号。
+                node['content'] = list(range(1, len(values) + 1))
+                node['source'] = [[] for _ in values]
+                sources = node['source']
             for ids in sources:
                 if not isinstance(ids, list) or any(type(i) is not int or not 1 <= i <= len(hits) for i in ids):
                     raise ValueError('大事记 source 引用编号无效')
-        data = {'rows': [
-            {'cells': {n['title']: n['content'][i] for n in nodes if n['title'] != '序号'},
-             'citation_ids': list(dict.fromkeys(cid for n in nodes for cid in n['source'][i]))}
-            for i in range(length or 0)]}
+        all_citations = {}
+        for index in range(length or 0):
+            validate_table_language({n['title']: n['content'][index]
+                                     for n in nodes if n['title'] != '序号'})
+        for node in nodes:
+            resolved = []
+            for ids in node['source']:
+                if node['title'] == '序号':
+                    ids = []
+                _, citations = parse_output(json.dumps({'body':'引用校验','citation_ids':ids}), hits)
+                resolved.append(citations)
+                all_citations.update({c['citation_id']:c for c in citations})
+            node['source'] = resolved
+        return json.dumps({'format':'chronology_columns', 'columns':columns, 'nodes':nodes}, ensure_ascii=False), list(all_citations.values())
     if not isinstance(data, dict) or set(data) != {'rows'} or not isinstance(data['rows'], list):
         raise ValueError('大事记必须返回 rows 数组')
     rows, all_citations = [], {}
@@ -76,9 +107,8 @@ def parse_table_output(content, hits, columns):
         expected = set(columns) - {'序号'}
         if not isinstance(cells, dict) or set(cells) != expected or any(not isinstance(v, str) or not v.strip() for v in cells.values()):
             raise ValueError('大事记列名或单元格内容无效')
-        if not row['citation_ids']:
-            raise ValueError('大事记事件必须有引用依据')
-        _, citations = parse_output(json.dumps({'body':' '.join(cells.values()),
+        validate_table_language(cells)
+        _, citations = parse_output(json.dumps({'body':'引用校验',
             'citation_ids':row['citation_ids']}, ensure_ascii=False), hits)
         ordered = {key: str(index) if key == '序号' else cells[key] for key in columns}
         rows.append({'cells': ordered, 'citations': citations})

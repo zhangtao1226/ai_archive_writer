@@ -17,6 +17,7 @@ from models.task_model import TaskModel
 from models.task_content_model import TaskContentModel
 from services.research_mode import resolve_research_mode
 from services.table_generation import generate_table
+from services.relevance_service import filter_relevant_hits
 from services.generation_output import parse_output, parse_table_output
 from prompts.prompt_template import build_messages, build_sources, PROMPT_VERSION, build_table_messages
 
@@ -81,7 +82,7 @@ class GenerationWorker:
                         self.kb = KnowledgeBase()
                     hits = self.kb.query(task['retrieval_query'] + '\n章节：' + node.get('path', node['title']),
                                          top_k=5, initial_k=max(5, self.config.rag_initial_k), rerank=True)
-                    if not hits:
+                    if not hits and not is_table:
                         raise ValueError('未检索到相关资料，停止生成以避免无依据正文')
                     selected = []
                     used = 0
@@ -91,7 +92,7 @@ class GenerationWorker:
                             continue
                         selected.append(hit)
                         used += len(part) + 2
-                    if not selected:
+                    if not selected and not is_table:
                         raise ValueError('资料预算不足以容纳一个完整片段')
                     messages = build_messages(
                         scene='generate',
@@ -127,6 +128,15 @@ class GenerationWorker:
                         response.raise_for_status()
                         return response.json()['choices'][0]
                     if is_table:
+                        project = {
+                            'title':task['title'],
+                            'description':task['description'],
+                            'time_range':task['time_range']
+                        }
+                        candidate_count = len(selected)
+                        selected = filter_relevant_hits(request_choice, project, selected)
+                        messages = build_table_messages(project, columns, selected)
+                        logger.info(f"大事记资料筛选 task_id={task['task_id']} candidates={candidate_count} relevant={len(selected)}")
                         body, citations = generate_table(request_choice, messages, selected, columns, task['task_id'])
                     else:
                         choice = request_choice(messages)

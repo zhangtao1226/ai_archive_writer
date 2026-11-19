@@ -23,4 +23,4 @@ def generate_table(request_choice, messages, hits, columns, task_id):
                 '上次响应未通过校验：' + str(exc)[:600] +
                 '。请重新生成完整且精简的 JSON nodes。每列必须包含 title、level、content、source；'
                 '各列等长，禁止空白占位行，不要复制其他列引用来补字段。'
-                '仅生成资料支持且在时间范围内的事件；资料不足时保留所有表头，各列 content/source 均为 []。'}]
+                '仅生成符合主题和时间范围的事件；资料不足时允许使用自身可靠知识，对应单元格 source 为 []；无可靠事件才返回空表。'}]
