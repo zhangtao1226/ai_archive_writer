@@ -16,6 +16,13 @@ root_path = current_file_path.parent.parent
 
 class Configs(BaseSettings):
 
+    # 素材服务域名/端口，不含 /api/v1/public/materials/detail
+    material_api_base_url: str = ""
+    material_api_token: str = ""  # 若上游使用 Bearer 鉴权则配置；空值不发送鉴权头
+    material_api_timeout_seconds: float = Field(default=30, gt=0)
+    material_attachment_root: str = ""  # Windows 示例：r"F:\save"
+    material_attachment_max_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
+
     vllm_base_url: str = "http://127.0.0.1:8001/v1"
     vllm_model_name: str = "Qwen3.8-27B"
     vllm_api_key: str = "EMPTY"

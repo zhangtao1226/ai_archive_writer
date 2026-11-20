@@ -21,6 +21,7 @@ from models.task_revision_proposal_model import TaskRevisionProposalModel as Pro
 from models.task_content_version_model import TaskContentVersionModel as Version
 from services.generation_output import parse_output
 from services.chat_stream import partial_body
+from services.reference_material_service import ReferenceMaterialService
 
 
 def now():
@@ -33,6 +34,8 @@ class ChatService:
         """绑定配置和公共连接池，延迟加载检索模型。"""
         self.config = config
         self.pool = get_database_pool(config.application_db_path)
+        self.reference_service = ReferenceMaterialService(config)
+        self.reference_loader = self.reference_service.load
         self.kb = None
         self.lock = Lock()
 
@@ -109,6 +112,51 @@ class ChatService:
             proposed_body=proposal.proposed_body if proposal else None
         )
 
+    def prepare_text_request(self, payload):
+        """将前端文本请求映射到章节会话，保留用户提交的正文原文。"""
+        from schemas.ChatRequest import ChatRequest
+        for value in (payload.user_id, payload.task_id, payload.node_id, payload.questions, payload.content):
+            if not value.strip():
+                raise ValueError('用户、任务、节点、正文和问题不能为空')
+        if payload.use_reference and not payload.references:
+            raise ValueError('use_reference=true 时 references 不能为空')
+        if payload.use_reference:
+            self.reference_service.validate_config()
+        with orm_session(self.pool, immediate=True) as s:
+            section = self.authorize(s, payload.task_id, payload.node_id, payload.user_id)
+            body = s.scalar(select(Content).where(Content.task_id == payload.task_id, Content.section_id == payload.node_id))
+            if body is None:
+                raise ValueError('章节正文不存在')
+            c = s.scalar(select(Conversation).where(Conversation.task_id == payload.task_id,
+                Conversation.section_id == payload.node_id, Conversation.user_id == payload.user_id,
+                Conversation.status == 'active').order_by(Conversation.created_at.desc()))
+            if c is None:
+                c = Conversation(
+                    conversation_id=str(uuid4()),
+                    task_id=payload.task_id,
+                    section_id=payload.node_id,
+                    user_id=payload.user_id,
+                    title=section.title,
+                    status='active',
+                    summary='',
+                    summary_through_sequence=0,
+                    created_at=now(),
+                    updated_at=now()
+                )
+                s.add(c)
+            return ChatRequest(
+                task_id=payload.task_id,
+                section_id=payload.node_id,
+                conversation_id=c.conversation_id,
+                request_id=payload.request_id or str(uuid4()),
+                message=payload.questions,
+                base_revision=body.revision,
+                mode='edit',
+                current_content=payload.content,
+                use_reference=payload.use_reference,
+                references=[r.model_dump() for r in payload.references]
+            )
+
     def chat(self, request, user_id, emit=None, cancelled=None):
         """保存用户消息，执行带预算的流式推理；完成后保存回答和建议。"""
         with orm_session(self.pool, immediate=True) as s:
@@ -141,7 +189,8 @@ class ChatService:
             if body is None or body.revision != request.base_revision:
                 raise ValueError('正文不存在或版本已变化，请刷新')
 
-            text, citations, title = body.body, json.loads(body.citations), body.title
+            text = request.current_content if request.current_content is not None else body.body
+            citations, title = json.loads(body.citations), body.title
 
             history = s.scalars(select(Message).where(Message.conversation_id == c.conversation_id,
                 Message.status == 'completed').order_by(Message.sequence.desc()).limit(12)).all()
@@ -182,6 +231,14 @@ class ChatService:
             )
         try:
             hits = [{'id': x.get('chunk_id'), 'text': x['text'], 'metadata': x.get('metadata',{})} for x in citations]
+            if request.current_content is not None:
+                hits = []
+            if request.use_reference:
+                if self.reference_loader is None:
+                    raise ValueError('引用素材接口尚未配置')
+                hits = self.reference_loader(request.references, user_id)
+                if not hits or any(not isinstance(h.get('text'), str) or not h['text'].strip() for h in hits):
+                    raise ValueError('引用素材读取失败或无正文')
             if request.retrieve:
                 with self.lock:
                     if self.kb is None:
@@ -217,7 +274,7 @@ class ChatService:
                         break
                     if previous:
                         previous = previous[2:]
-                    elif hits:
+                    elif hits and not request.use_reference:
                         hits.pop()
                     else:
                         raise ValueError('章节或问题超出上下文预算，请缩小修改范围')

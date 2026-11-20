@@ -22,7 +22,7 @@ from core.LoggerDetector import logger
 from core.ResponseUtil import ResponseUtil
 from rag.scheduler import IngestionScheduler
 from schemas.EditingResearchRequest import EditingResearchRequest
-from schemas.ChatRequest import ChatRequest
+from schemas.ChatRequest import ChatRequest, TextChatRequest
 from services.chat_stream import sse
 from services.project_service import create_project
 from services.research_parameter_adapter import normalize_research_request
@@ -158,7 +158,18 @@ async def call_chat_service(request, method, *args):
 
 
 @app.post("/v1/chat")
-async def chat(payload: ChatRequest, request: Request):
+async def chat(payload: TextChatRequest, request: Request):
+    """按用户、任务和节点恢复会话，以当前编辑文本执行流式修改。"""
+    authenticated = getattr(request.state, 'user_id', None)
+    if authenticated is not None and authenticated != payload.user_id:
+        raise HTTPException(status_code=403, detail="请求用户与登录用户不一致")
+    user_id = payload.user_id
+    try:
+        payload = await asyncio.to_thread(request.app.state.chat_service.prepare_text_request, payload)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        return ResponseUtil.error(code=422, message=str(exc))
     queue = Queue(maxsize=128)
     cancelled = Event()
 
