@@ -50,14 +50,21 @@ def parse_table_output(content, hits, columns):
     data = json.loads(content)
     if isinstance(data, dict) and 'nodes' in data:
         nodes = data['nodes']
-        if set(data) != {'nodes'} or not isinstance(nodes, list) or len(nodes) != len(columns):
-            raise ValueError('大事记 nodes 必须与表头列数一致')
+        if not isinstance(nodes, list):
+            raise ValueError(f'大事记 nodes 必须是数组，实际为 {type(nodes).__name__}')
+        if len(nodes) != len(columns):
+            raise ValueError(f'大事记列数不一致：期望{len(columns)}列 {columns}，实际{len(nodes)}列')
         length = None
-        for title, node in zip(columns, nodes):
-            if not isinstance(node, dict) or set(node) != {'title', 'level', 'content', 'source'}:
-                keys = set(node) if isinstance(node, dict) else set()
-                required = {'title', 'level', 'content', 'source'}
-                raise ValueError(f'大事记列 {title!r} 结构无效，缺少字段={sorted(required-keys)}，多余字段={sorted(keys-required)}')
+        required = {'title', 'level', 'content', 'source'}
+        for position, (title, node) in enumerate(zip(columns, nodes)):
+            if not isinstance(node, dict):
+                raise ValueError(f'大事记列 {title!r} 必须是对象')
+            missing = required - set(node)
+            if missing:
+                raise ValueError(f'大事记列 {title!r} 缺少字段={sorted(missing)}')
+            # 附加说明不是事件数据或引用，丢弃它们而不是因其触发整表重试。
+            node = {key: node[key] for key in required}
+            nodes[position] = node
             if node['title'] != title or type(node['level']) is not int or node['level'] != 1:
                 raise ValueError('大事记列名、顺序或层级不匹配')
             values, sources = node['content'], node['source']
@@ -98,7 +105,7 @@ def parse_table_output(content, hits, columns):
             node['source'] = resolved
         return json.dumps({'format':'chronology_columns', 'columns':columns, 'nodes':nodes}, ensure_ascii=False), list(all_citations.values())
     if not isinstance(data, dict) or set(data) != {'rows'} or not isinstance(data['rows'], list):
-        raise ValueError('大事记必须返回 rows 数组')
+        raise ValueError('大事记必须返回包含 nodes 数组的 JSON 对象（兼容旧 rows 格式）')
     rows, all_citations = [], {}
     for index, row in enumerate(data['rows'], 1):
         if not isinstance(row, dict) or set(row) != {'cells', 'citation_ids'}:
