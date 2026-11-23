@@ -128,9 +128,15 @@ class ChatService:
     def prepare_text_request(self, payload):
         """将前端文本请求映射到章节会话，保留用户提交的正文原文。"""
         from schemas.ChatRequest import ChatRequest
-        for value in (payload.user_id, payload.task_id, payload.node_id, payload.questions, payload.content):
-            if not value.strip():
-                raise ValueError('用户、任务、节点、正文和问题不能为空')
+        for field in ('user_id', 'task_id', 'questions', 'content'):
+            value = getattr(payload, field, None)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f'缺少必要参数: {field}')
+        node_id = payload.node_id
+        if payload.type == 'world' and (not isinstance(node_id, str) or not node_id.strip()):
+            raise ValueError('type=world 时缺少必要参数: node_id')
+        if payload.type == 'excel' and (node_id is None or not node_id.strip()):
+            raise ValueError('Excel 参数校验已通过，但当前对话服务尚未接入无章节的表格对话流程')
         if payload.use_reference and not payload.references:
             raise ValueError('use_reference=true 时 references 不能为空')
         if payload.use_reference:
