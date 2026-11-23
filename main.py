@@ -134,12 +134,10 @@ async def get_tasks_info(task_id: str):
     return ResponseUtil.success(data=result, message=result['status'])
 
 
-def chat_user(request: Request):
-    """读取认证中间件提供的用户身份，未认证时拒绝访问。"""
-    # 由认证中间件设置，禁止将客户端随意填写的 user_id 当作身份。
-    user_id = getattr(request.state, 'user_id', None)
-    if not isinstance(user_id, str) or not user_id:
-        raise HTTPException(status_code=401, detail="请先接入登录认证并设置 request.state.user_id")
+def chat_user(user_id: str):
+    """接收 Java 传入的用户标识用于会话隔离，不执行登录或分配权限校验。"""
+    if not user_id.strip():
+        raise HTTPException(status_code=422, detail="user_id 不能为空")
     return user_id
 
 
@@ -160,16 +158,14 @@ async def call_chat_service(request, method, *args):
 @app.post("/v1/chat")
 async def chat(payload: TextChatRequest, request: Request):
     """按用户、任务和节点恢复会话，以当前编辑文本执行流式修改。"""
-    authenticated = getattr(request.state, 'user_id', None)
-    if authenticated is not None and authenticated != payload.user_id:
-        raise HTTPException(status_code=403, detail="请求用户与登录用户不一致")
     user_id = payload.user_id
     try:
-        payload = await asyncio.to_thread(request.app.state.chat_service.prepare_text_request, payload)
+        chat_request = await asyncio.to_thread(request.app.state.chat_service.prepare_text_request, payload)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         return ResponseUtil.error(code=422, message=str(exc))
+
     queue = Queue(maxsize=128)
     cancelled = Event()
 
@@ -186,7 +182,7 @@ async def chat(payload: TextChatRequest, request: Request):
     def generate():
         """在线程中运行同步检索及推理，异常转为 SSE error。"""
         try:
-            result = request.app.state.chat_service.chat(payload, user_id, emit, cancelled)
+            result = request.app.state.chat_service.chat(chat_request, user_id, emit, cancelled)
             emit('done' if result['status'] == 'completed' else 'status', result)
         except Exception:
             logger.exception('流式对话失败')
@@ -201,9 +197,11 @@ async def chat(payload: TextChatRequest, request: Request):
             yield sse(
                 'start',
                 {
-                    'conversation_id':payload.conversation_id,
-                    'request_id':payload.request_id,
-                    'section_id':payload.section_id
+                    'task_id':payload.task_id,
+                    'node_id':payload.node_id,
+                    'user_id':user_id,
+                    'conversation_id':chat_request.conversation_id,
+                    'request_id':chat_request.request_id
                 }
             )
             while True:
@@ -230,7 +228,7 @@ async def chat(payload: TextChatRequest, request: Request):
 
 @app.post("/v1/tasks/{task_id}/sections/{section_id}/conversations")
 async def create_conversation(task_id: str, section_id: str, request: Request, user_id: str = Depends(chat_user)):
-    """创建属于登录用户的章节会话。"""
+    """创建或恢复指定用户的章节会话，user_id 通过查询参数传入。"""
     return await call_chat_service(request, 'create_conversation', task_id, section_id, user_id)
 
 
@@ -242,7 +240,7 @@ async def chat_history(conversation_id: str, request: Request, after: int = 0, l
 
 @app.post("/v1/chat/proposals/{proposal_id}/apply")
 async def apply_proposal(proposal_id: str, request: Request, user_id: str = Depends(chat_user)):
-    """应用AI建议，服务层同时校验章节权限及正文版本。"""
+    """应用 AI 建议，检查会话归属及正文版本；权限由 Java 校验。"""
     return await call_chat_service(request, 'apply', proposal_id, user_id)
 
 

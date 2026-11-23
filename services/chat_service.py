@@ -44,25 +44,38 @@ class ChatService:
         with orm_session(self.pool, immediate=True) as s:
             Base.metadata.create_all(s.connection())
 
-    def authorize(self, s, task_id, section_id, user_id):
-        """检查当前用户是否为可编辑章节的唯一负责人。"""
+    def ensure_section(self, s, task_id, section_id):
+        """按已有正文补齐章节关联记录；人员分配和编辑权限由 Java 管理。"""
+        body = s.scalar(select(Content).where(
+            Content.task_id == task_id, Content.section_id == section_id))
+        if body is None:
+            raise ValueError('任务章节正文不存在')
         section = s.get(TaskSectionModel, (task_id, section_id))
-        if not section or not section.editable or section.assigned_user_id != user_id:
-            raise PermissionError('章节未分配给当前用户或不可编辑')
+        if section is None:
+            section = TaskSectionModel(
+                task_id=task_id, section_id=section_id, title=body.title,
+                editable=True, created_at=now(), updated_at=now())
+            s.add(section)
+            s.flush()
         return section
 
     def conversation(self, s, conversation_id, user_id):
-        """读取会话并再次校验所有者及章节权限。"""
+        """读取属于指定用户的活动会话，防止混用对话历史。"""
         c = s.get(Conversation, conversation_id)
         if not c or c.user_id != user_id or c.status != 'active':
             raise PermissionError('无权访问会话')
-        self.authorize(s, c.task_id, c.section_id, user_id)
         return c
 
     def create_conversation(self, task_id, section_id, user_id):
         """为指定章节创建独立的个人会话。"""
         with orm_session(self.pool, immediate=True) as s:
-            section = self.authorize(s, task_id, section_id, user_id)
+            section = self.ensure_section(s, task_id, section_id)
+            existing = s.scalar(select(Conversation).where(
+                Conversation.task_id == task_id, Conversation.section_id == section_id,
+                Conversation.user_id == user_id, Conversation.status == 'active'
+            ).order_by(Conversation.created_at.desc()))
+            if existing is not None:
+                return {'conversation_id': existing.conversation_id}
             c = Conversation(
                 conversation_id=str(uuid4()),
                 task_id=task_id,
@@ -123,7 +136,7 @@ class ChatService:
         if payload.use_reference:
             self.reference_service.validate_config()
         with orm_session(self.pool, immediate=True) as s:
-            section = self.authorize(s, payload.task_id, payload.node_id, payload.user_id)
+            section = self.ensure_section(s, payload.task_id, payload.node_id)
             body = s.scalar(select(Content).where(Content.task_id == payload.task_id, Content.section_id == payload.node_id))
             if body is None:
                 raise ValueError('章节正文不存在')
