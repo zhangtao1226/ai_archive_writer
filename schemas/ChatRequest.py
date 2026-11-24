@@ -10,6 +10,7 @@ class ChatRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=10000)
     base_revision: int = Field(ge=1)
+    type: Literal['world', 'excel'] = 'world'
     mode: Literal['ask', 'edit'] = 'ask'
     retrieve: bool = False
     current_content: str | None = None
@@ -44,4 +45,7 @@ class TextChatRequest(BaseModel):
             raise ValueError('type=world 时缺少必要参数: node_id')
         if self.node_id is not None:
             self.node_id = self.node_id.strip() or None
+        if self.type == 'excel':
+            from schemas.excel_content import parse_excel_content
+            parse_excel_content(self.content)
         return self
