@@ -36,3 +36,30 @@ def partial_body(raw):
     value = json.loads('"' + raw[start:i] + '"')
     # UTF-16代理对可能跨片段，不把半个字符发给客户端。
     return value.rstrip(''.join(chr(c) for c in range(0xD800, 0xE000)))
+
+
+def partial_table(raw):
+    """提取 table 对象的原始 JSON 增量，忽略字符串中的括号。"""
+    match = re.match(r'\s*\{\s*"table"\s*:\s*\{', raw)
+    if not match:
+        return ''
+    start = match.end() - 1
+    depth, quoted, escaped = 0, False, False
+    for index in range(start, len(raw)):
+        char = raw[index]
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return raw[start:index + 1]
+    return raw[start:]
