@@ -21,6 +21,7 @@ class TaskMessageModel(Base):
     role = Column(Text, nullable=False)
     sender_user_id = Column(Text, nullable=True, comment='用户消息必填；助手消息为空，由服务层校验')
     content = Column(Text, nullable=False, default='')
+    input_content = Column(Text, nullable=True, comment='本轮用户提交的编辑内容快照')
     citations = Column(Text, nullable=False, default='[]', comment='本条回复引用资料JSON')
     base_revision = Column(Integer, nullable=True, comment='发起请求时正文修订号')
     status = Column(Text, nullable=False, default='pending')

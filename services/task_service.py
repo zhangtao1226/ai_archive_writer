@@ -143,6 +143,21 @@ class TaskService:
                     content['citations'] = decode_citations(content['citations'])
                     if mode == 'single_node':
                         content['table'] = json.loads(content['body'])
+                        if isinstance(content['table'], dict) and all(isinstance(v, list) for v in content['table'].values()):
+                            from schemas.excel_content import parse_excel_content
+                            table = parse_excel_content(content['body'])
+                            content['table'] = {
+                                'format': 'chronology_columns',
+                                'columns': list(table),
+                                'nodes': [
+                                    {
+                                        'title': key,
+                                        'level': 1,
+                                        'content': values,
+                                        'source': [[] for _ in values]
+                                    } for key, values in table.items()
+                                ]
+                            }
                         if not isinstance(content['table'], dict) or content['table'].get('columns') != columns:
                             raise ValueError('已保存的大事记内容不是匹配表头的表格，需要重新生成')
                 order = self._outline_order(result['task_info']['outline_snapshot'])

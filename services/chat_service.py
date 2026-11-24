@@ -10,7 +10,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from threading import Lock
 import httpx
-from sqlalchemy import select, func
+from sqlalchemy import select, func, inspect
 from core.db import get_database_pool, orm_session
 from models.task_model import Base, TaskModel
 from models.task_section_model import TaskSectionModel
@@ -43,6 +43,8 @@ class ChatService:
         """创建对话相关表，不删除已有数据。"""
         with orm_session(self.pool, immediate=True) as s:
             Base.metadata.create_all(s.connection())
+            if 'input_content' not in {c['name'] for c in inspect(s.connection()).get_columns('task_messages')}:
+                s.connection().exec_driver_sql('ALTER TABLE task_messages ADD COLUMN input_content TEXT')
 
     def ensure_section(self, s, task_id, section_id):
         """按已有正文补齐章节关联记录；人员分配和编辑权限由 Java 管理。"""
@@ -121,6 +123,8 @@ class ChatService:
             citations=json.loads(m.citations),
             error=m.error_message,
             base_revision=m.base_revision,
+            input_content=m.input_content,
+            revision=proposal.applied_revision if proposal else None,
             proposal_id=proposal.proposal_id if proposal else None,
             proposed_body=proposal.proposed_body if proposal else None
         )
@@ -247,6 +251,7 @@ class ChatService:
                     role='user',
                     sender_user_id=user_id,
                     content=request.message,
+                    input_content=text,
                     status='completed',
                     citations='[]',
                     **common
@@ -368,6 +373,8 @@ class ChatService:
                     if not isinstance(envelope, dict) or set(envelope) != {'table', 'citation_ids'} or not isinstance(envelope.get('table'), dict):
                         raise ValueError('模型输出格式错误：必须包含 table 对象及 citation_ids 数组')
                     table = parse_excel_content(json.dumps(envelope['table'], ensure_ascii=False))
+                    if list(table) != list(parse_excel_content(text)):
+                        raise ValueError('模型改变了表头或列顺序，请保持原始表头')
                     _, refs = parse_output(json.dumps(
                         {
                             'body': '引用校验',
@@ -397,6 +404,8 @@ class ChatService:
                         )
                     )
                     s.flush()
+                    proposal = s.scalar(select(Proposal).where(Proposal.message_id == mid))
+                    self._apply_in_session(s, proposal.proposal_id, user_id)
                 result = self.result(s,m)
                 if request.type == 'excel':
                     result['table'] = table
@@ -410,39 +419,26 @@ class ChatService:
     def apply(self, proposal_id, user_id):
         """校验修订号并原子应用建议，保留正文历史版本。"""
         with orm_session(self.pool, immediate=True) as s:
-            p = s.get(Proposal,proposal_id)
-            if not p:
-                raise ValueError('修改建议不存在')
-            m = s.get(Message,p.message_id)
-            c = self.conversation(s,m.conversation_id,user_id)
+            return self._apply_in_session(s, proposal_id, user_id)
 
-            content = s.scalar(select(Content).where(Content.task_id==c.task_id,Content.section_id==c.section_id))
+    def _apply_in_session(self, s, proposal_id, user_id):
+        """在调用方事务内保存新旧版本并更新正式正文，失败时整体回滚。"""
+        p = s.get(Proposal,proposal_id)
+        if not p:
+            raise ValueError('修改建议不存在')
+        m = s.get(Message,p.message_id)
+        c = self.conversation(s,m.conversation_id,user_id)
 
-            if p.status == 'applied':
-                return {'revision':p.applied_revision}
-            if p.status != 'pending' or not content or content.revision != p.base_revision:
-                raise ValueError('正文版本冲突或建议不可应用')
-            if not s.scalar(
-                    select(Version)
-                    .where(Version.content_id==content.content_id,Version.revision==content.revision)
-            ):
-                s.add(
-                    Version(
-                        version_id=str(uuid4()),
-                        content_id=content.content_id,
-                        revision=content.revision,
-                        title=content.title,
-                        body=content.body,
-                        citations=content.citations,
-                        change_type='manual',
-                        changed_by=user_id,
-                        created_at=now()
-                    )
-                )
-            content.body, content.citations = p.proposed_body, p.citations
-            content.revision += 1
-            content.updated_at = now()
+        content = s.scalar(select(Content).where(Content.task_id==c.task_id,Content.section_id==c.section_id))
 
+        if p.status == 'applied':
+            return {'revision':p.applied_revision}
+        if p.status != 'pending' or not content or content.revision != p.base_revision:
+            raise ValueError('正文版本冲突或建议不可应用')
+        if not s.scalar(
+                select(Version)
+                .where(Version.content_id==content.content_id,Version.revision==content.revision)
+        ):
             s.add(
                 Version(
                     version_id=str(uuid4()),
@@ -451,21 +447,38 @@ class ChatService:
                     title=content.title,
                     body=content.body,
                     citations=content.citations,
-                    change_type='ai_edit',
+                    change_type='manual',
                     changed_by=user_id,
-                    proposal_id=p.proposal_id,
                     created_at=now()
                 )
             )
+        content.body, content.citations = p.proposed_body, p.citations
+        content.revision += 1
+        content.updated_at = now()
 
-            p.status = 'applied'
-            p.applied_revision = content.revision
-            p.applied_by = user_id
-            p.applied_at = now()
-            p.updated_at = now()
+        s.add(
+            Version(
+                version_id=str(uuid4()),
+                content_id=content.content_id,
+                revision=content.revision,
+                title=content.title,
+                body=content.body,
+                citations=content.citations,
+                change_type='ai_edit',
+                changed_by=user_id,
+                proposal_id=p.proposal_id,
+                created_at=now()
+            )
+        )
 
-            return {
-                'revision':content.revision,
-                'body':content.body,
-                'citations':json.loads(content.citations)
-            }
+        p.status = 'applied'
+        p.applied_revision = content.revision
+        p.applied_by = user_id
+        p.applied_at = now()
+        p.updated_at = now()
+
+        return {
+            'revision':content.revision,
+            'body':content.body,
+            'citations':json.loads(content.citations)
+        }
