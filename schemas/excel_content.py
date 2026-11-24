@@ -1,5 +1,6 @@
 """表格对话的列式 JSON 校验。"""
 import json
+import math
 
 
 def parse_excel_content(value):
@@ -22,8 +23,8 @@ def parse_excel_content(value):
     for header, cells in data.items():
         if not header.strip() or not isinstance(cells, list):
             raise ValueError('表头不能为空，列内容必须是数组')
-        if any(not isinstance(cell, str) for cell in cells):
-            raise ValueError('单元格必须是字符串，空值请使用空字符串')
+        if any(type(cell) not in (str, int, float) or (type(cell) is float and not math.isfinite(cell)) for cell in cells):
+            raise ValueError('单元格必须是字符串或有限数字，空值请使用空字符串')
         lengths.add(len(cells))
     if len(lengths) != 1:
         raise ValueError('各列行数必须一致，缺失单元格请用空字符串补齐')
