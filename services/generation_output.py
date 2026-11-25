@@ -23,7 +23,7 @@ def parse_output(content, hits):
     english = len(re.findall(r'[A-Za-z]', body))
     if not chinese or english > chinese:
         raise ValueError('正文不是以中文为主')
-    if not isinstance(ids, list) or any(type(i) is not int or not 1 <= i <= len(hits) for i in ids):
+    if not isinstance(ids, list) or any(not 1 <= i <= len(hits) for i in ids):
         raise ValueError('引用编号无效')
     citations = []
     for i in dict.fromkeys(ids):
