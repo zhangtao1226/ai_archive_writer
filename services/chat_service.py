@@ -229,6 +229,9 @@ class ChatService:
                 raise ValueError('正文不存在或版本已变化，请刷新')
 
             text = request.current_content if request.current_content is not None else body.body
+            if request.type == 'excel':
+                from schemas.excel_content import parse_excel_content
+                text = json.dumps(parse_excel_content(text), ensure_ascii=False)
             citations, title = json.loads(body.citations), body.title
 
             history = s.scalars(select(Message).where(Message.conversation_id == c.conversation_id,
@@ -370,6 +373,11 @@ class ChatService:
                 if request.type == 'excel':
                     from schemas.excel_content import parse_excel_content
                     envelope = json.loads(raw)
+                    if isinstance(envelope, dict) and envelope.get('format') == 'chronology_columns':
+                        # 不静默丢弃模型生成的来源；此兼容分支只接受无引用结果。
+                        if hits or any(any(node.get('source', [])) for node in envelope.get('nodes', []) if isinstance(node, dict)):
+                            raise ValueError('模型返回旧表格引用格式，请使用 table 和 citation_ids')
+                        envelope = {'table': parse_excel_content(json.dumps(envelope, ensure_ascii=False)), 'citation_ids': []}
                     if (not hits and isinstance(envelope, dict)
                             and list(envelope) == list(parse_excel_content(text))
                             and all(isinstance(v, list) for v in envelope.values())):

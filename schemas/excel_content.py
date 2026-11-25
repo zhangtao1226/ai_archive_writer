@@ -17,6 +17,19 @@ def parse_excel_content(value):
         data = json.loads(value, object_pairs_hook=unique_pairs)
     except json.JSONDecodeError as exc:
         raise ValueError('excel content 必须是合法 JSON 字符串，请使用双引号') from exc
+    if isinstance(data, dict) and data.get('format') == 'chronology_columns':
+        columns, nodes = data.get('columns'), data.get('nodes')
+        if (not isinstance(columns, list) or not columns
+                or any(not isinstance(c, str) for c in columns)
+                or len(set(columns)) != len(columns)
+                or not isinstance(nodes, list) or len(nodes) != len(columns)):
+            raise ValueError('chronology_columns 表头或节点无效')
+        normalized = {}
+        for title, node in zip(columns, nodes):
+            if not isinstance(node, dict) or node.get('title') != title:
+                raise ValueError('表格节点与表头顺序不一致')
+            normalized[title] = node.get('content')
+        data = normalized
     if not isinstance(data, dict) or not data:
         raise ValueError('表格必须包含至少一个表头')
     lengths = set()
