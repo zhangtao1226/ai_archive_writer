@@ -271,8 +271,13 @@ class ChatService:
                 text = json.dumps(parse_excel_content(text), ensure_ascii=False)
             citations, title = json.loads(body.citations), body.title
 
-            history = s.scalars(select(Message).where(Message.conversation_id == c.conversation_id,
-                Message.status == 'completed').order_by(Message.sequence.desc()).limit(12)).all()
+            history = s.scalars(
+                select(Message)
+                .where(
+                    Message.conversation_id == c.conversation_id,
+                    Message.status == 'completed'
+                )
+                .order_by(Message.sequence.desc()).limit(12)).all()
 
             previous = [{'role': m.role, 'content': m.content} for m in reversed(history)]
             seq = (s.scalar(select(func.max(Message.sequence)).where(Message.conversation_id == c.conversation_id)) or 0)+1
