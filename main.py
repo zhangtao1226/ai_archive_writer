@@ -10,7 +10,7 @@ from queue import Queue, Empty
 from threading import Event, Thread
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Request, Depends, HTTPException, Query
 from pydantic import ValidationError
 from sqlite3 import Error as SQLiteError
 from sqlalchemy.exc import SQLAlchemyError
@@ -230,6 +230,19 @@ async def chat(payload: TextChatRequest, request: Request):
 async def create_conversation(task_id: str, section_id: str, request: Request, user_id: str = Depends(chat_user)):
     """创建或恢复指定用户的章节会话，user_id 通过查询参数传入。"""
     return await call_chat_service(request, 'create_conversation', task_id, section_id, user_id)
+
+
+@app.get("/v1/chat/history")
+async def chat_history_rounds(
+    request: Request,
+    task_id: str = Query(..., min_length=1),
+    section_id: str = Query(..., min_length=1),
+    user_id: str = Query(..., min_length=1),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """查询指定任务、章节、用户的历史，按完整轮次倒序分页。"""
+    return await call_chat_service(request, 'history_rounds', task_id, section_id, user_id, page, page_size)
 
 
 @app.get("/v1/conversations/{conversation_id}/messages")

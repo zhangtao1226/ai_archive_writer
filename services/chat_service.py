@@ -10,7 +10,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from threading import Lock
 import httpx
-from sqlalchemy import select, func, inspect
+from sqlalchemy import select, func, inspect, tuple_
 from core.db import get_database_pool, orm_session
 from models.task_model import Base, TaskModel
 from models.task_section_model import TaskSectionModel
@@ -109,6 +109,43 @@ class ChatService:
                 .limit(limit)
             ).all()
             return [self.result(s, m) for m in rows]
+
+    def history_rounds(self, task_id, section_id, user_id, page=1, page_size=20):
+        """按任务、章节和用户查询完整轮次；最新轮次优先，不跨页拆分问答。"""
+        for name, value in (('task_id', task_id), ('section_id', section_id), ('user_id', user_id)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f'缺少必要参数: {name}')
+        if type(page) is not int or page < 1 or type(page_size) is not int or not 1 <= page_size <= 100:
+            raise ValueError('page 必须至少为1，page_size 必须在1到100之间')
+        with orm_session(self.pool) as s:
+            rounds = (select(Message.conversation_id.label('conversation_id'),
+                             Message.request_id.label('request_id'),
+                             func.min(Message.created_at).label('created_at'))
+                      .join(Conversation, Message.conversation_id == Conversation.conversation_id)
+                      .where(Conversation.task_id == task_id, Conversation.section_id == section_id,
+                             Conversation.user_id == user_id)
+                      .group_by(Message.conversation_id, Message.request_id).subquery())
+            total = s.scalar(select(func.count()).select_from(rounds)) or 0
+            selected = s.execute(select(rounds).order_by(
+                rounds.c.created_at.desc(), rounds.c.conversation_id.desc(), rounds.c.request_id.desc()
+            ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
+            items = []
+            if selected:
+                keys = [(r['conversation_id'], r['request_id']) for r in selected]
+                messages = s.scalars(select(Message).where(
+                    tuple_(Message.conversation_id, Message.request_id).in_(keys)
+                ).order_by(Message.sequence)).all()
+                grouped = {key: [] for key in keys}
+                for message in messages:
+                    item = self.result(s, message)
+                    item['created_at'] = message.created_at
+                    grouped[(message.conversation_id, message.request_id)].append(item)
+                for row in selected:
+                    items.append(dict(row, messages=grouped[(row['conversation_id'], row['request_id'])]))
+            return {'task_id': task_id, 'section_id': section_id, 'user_id': user_id,
+                    'page': page, 'page_size': page_size, 'total': total,
+                    'total_pages': (total + page_size - 1) // page_size,
+                    'has_more': page * page_size < total, 'items': items}
 
     @staticmethod
     def result(s, m):
