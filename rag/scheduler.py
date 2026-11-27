@@ -64,8 +64,15 @@ class IngestionScheduler:
         callbacks = MaterialCallbackService(self.config)
         self.records.initialize()
         callbacks.initialize()
-        signature = sha256(json.dumps({'model':self.config.embedding_model_path,'chunk_size':800,
-            'overlap':120,'parser_version':2},sort_keys=True).encode()).hexdigest()
+        signature = sha256(json.dumps({
+                        'model':self.config.embedding_model_path,
+                        'chunk_size':800,
+                        'overlap':120,
+                        'parser_version':2
+                },sort_keys=True
+                ).encode()
+            ).hexdigest()
+
         with MaterialCatalogClient(self.config) as api:
             callbacks.flush(api,self.allowed)
             materials = list(iter_materials(api.categories()))
@@ -75,9 +82,14 @@ class IngestionScheduler:
                 versions = []
                 errors = []
                 interrupted = False
-                metadata = {'category_id':category,'material_id':material['id'],
-                    'catalog_path':info.get('catalog_path',''), 'title':material.get('tm',''),
-                    'archive_code':material.get('dh','')}
+                metadata = {
+                    'category_id':category,
+                    'material_id':material['id'],
+                    'catalog_path':info.get('catalog_path',''),
+                    'title':material.get('tm',''),
+                    'archive_code':material.get('dh','')
+                }
+
                 def ingest(data, suffix, source, meta):
                     digest=sha256(data).hexdigest()
                     versions.append((source,digest))
@@ -93,8 +105,18 @@ class IngestionScheduler:
                             from rag.indexing import KnowledgeBase
                             self.kb=KnowledgeBase()
                         old_ids = self.kb.collection.get(where={'source':source})['ids']
-                        vector_info=self.kb.write(text,source=source,metadata={**meta,
-                            'ingestion_id':record['id'],'content_hash':digest},should_continue=allowed,return_info=True)
+                        vector_info=self.kb.write(
+                            text,
+                            source=source,
+                            metadata={
+                                **meta,
+                                'ingestion_id':record['id'],
+                                'content_hash':digest
+                            },
+                            should_continue=allowed,
+                            return_info=True
+                        )
+
                         stale = sorted(set(old_ids) - set(vector_info['chunk_ids']))
                         if stale:
                             self.kb.collection.delete(ids=stale)

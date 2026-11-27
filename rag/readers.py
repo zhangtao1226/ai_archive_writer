@@ -1,11 +1,13 @@
 # -*-coding  : utf-8 -*-
 # @Author    : zhangtao
 # @File      : readers.py
-# @Desc      : 从文件字节提取正文，避免将 PDF/DOCX
+# @Desc      : 从文件字节提取正文，避免将 PDF/DOCX 当作 UTF-8 解码
 # @Time      : 2026/11/6 10:50
 # @Software  : PyCharm
 
 from io import BytesIO
+
+from pypdf.generic import read_object
 
 
 def extract_text(data: bytes, suffix: str) -> str:
@@ -20,7 +22,8 @@ def extract_text(data: bytes, suffix: str) -> str:
         book = xlrd.open_workbook(file_contents=data)
         try:
             text = '\n'.join(sheet.name + '\n' + '\n'.join(
-                '\t'.join(str(v) for v in sheet.row_values(i)) for i in range(sheet.nrows)) for sheet in book.sheets())
+                '\t'.join(str(v) for v in sheet.row_values(i)) for i, in range(sheeet.nrows)
+            ) for sheet in book.sheets())
         finally:
             book.release_resources()
     elif suffix == '.xlsx':
@@ -28,7 +31,8 @@ def extract_text(data: bytes, suffix: str) -> str:
         book = load_workbook(BytesIO(data), read_only=True, data_only=True)
         try:
             text = '\n'.join(sheet.title + '\n' + '\n'.join(
-                '\t'.join('' if v is None else str(v) for v in row) for row in sheet.iter_rows(values_only=True)) for sheet in book)
+                '\t'.join('' if v is None else str(v) for v in row) for row in sheet.iter_row(values_only=True)) for sheet in book
+            )
         finally:
             book.close()
     elif suffix == '.docx':

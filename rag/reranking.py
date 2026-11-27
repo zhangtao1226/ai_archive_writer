@@ -37,4 +37,5 @@ class Reranker:
             if not math.isfinite(value):
                 raise ValueError("重排序模型返回无效分数")
             ranked.append({**doc, "rerank_score": value})
+
         return sorted(ranked, key=lambda doc: doc["rerank_score"], reverse=True)[:top_k]

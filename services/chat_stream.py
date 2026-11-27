@@ -37,16 +37,17 @@ def partial_body(raw):
     # UTF-16代理对可能跨片段，不把半个字符发给客户端。
     return value.rstrip(''.join(chr(c) for c in range(0xD800, 0xE000)))
 
-
 def partial_table(raw, allow_direct=False):
-    """提取 table 对象的原始 JSON 增量，忽略字符串中的括号。"""
-    match = re.match(r'\s*\{\s*"table"\s*:\s*\{', raw)
+    match = re.match(r'\s*\{s*"table"\s*:\s*\{', raw)
     if not match:
-        if allow_direct and re.match(r'\s*\{\s*"(?:[^"\\]|\\.)*"\s*:\s*\[', raw):
+        if allow_direct and re.match(r'\s*\{\s*"(?:[^"\\]|\\.)*"\s*\[', raw):
             return raw.lstrip()
         return ''
+
+
     start = match.end() - 1
     depth, quoted, escaped = 0, False, False
+
     for index in range(start, len(raw)):
         char = raw[index]
         if quoted:

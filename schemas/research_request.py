@@ -1,4 +1,10 @@
-"""外部立项格式；空 content 数组表示待生成正文。"""
+# -*-coding : utf-8 -*-
+# @Author   : zhangtao
+# @FileName : research_request.py
+# @Desc     : 编研立项接口参数整理转换
+# @Time     : 2026/11/18 15:36
+# @Software : PyCharm
+
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from schemas.EditingResearchRequest import Text
@@ -8,8 +14,9 @@ class ResearchNode(BaseModel):
     title: Text
     level: int = Field(ge=1, le=20)
     content: list[str] = Field(default_factory=list)
-    source: list = Field(default_factory=list)
+    source: list[str] = Field(default_factory=list)
     children: list['ResearchNode'] = Field(default_factory=list)
+
 
 class ResearchRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')

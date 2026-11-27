@@ -6,17 +6,17 @@
 # @Software  : PyCharm
 
 import json
-from services.citation_codec import decode_citations
-from services.research_mode import resolve_research_mode
 from datetime import datetime, timezone
-from sqlalchemy import select, inspect, Table, MetaData
+from sqlalchemy import select, inspect, Table, MetaData, values
+from sqlalchemy.dialects.mssql.information_schema import columns
+
 from core.db import get_database_pool, orm_session
 from models.task_model import TaskModel
-
+from services.citation_codec import decode_citations
+from services.research_mode import resolve_research_mode
 
 class DuplicateTaskError(ValueError):
-    """调用方指定的任务 ID 已存在，禁止覆盖或重新排队。"""
-
+    pass
 
 class TaskService:
     def __init__(self, db_path=None):
@@ -32,31 +32,34 @@ class TaskService:
     @staticmethod
     def _model(record):
         p = record['parameters']
-        # 兼容已有 NOT NULL 文本列：空字符串表示未提供，不伪造用户或小组。
         return TaskModel(
             task_id=record.get('task_id') or record['project_id'],
-            user_id=p.get('user_id') or '',
+            user_id=p['user_id'] or '',
             title=p['title'],
             research_type=p['type'],
-            responsible_user_id=p.get('person') or '',
-            group=p.get('group') or '',
+            responsible_user_id=p['person'] or '',
+            group=p['group'] or '',
             directory_template=json.dumps(p['directory_template'], ensure_ascii=False),
-            time_range=p.get('time_range', ''), description=p.get('description', ''),
-            status=record['status'], retrieval_query=record.get('retrieval_query', ''),
+            time_range=p.get('time_range', ''),
+            description=p.get('description', ''),
+            status=record['status'],
+            retrieval_query=record.get('retrieval_query', ''),
             group_snapshot=json.dumps(record['group_snapshot'], ensure_ascii=False),
             outline_snapshot=json.dumps(record['outline_snapshot'], ensure_ascii=False),
-            created_at=record['created_at'], updated_at=record.get('updated_at', record['created_at']))
+            created_at=record['created_at'],
+            updated_at=record.get('updated_at', record['created_at'])
+        )
 
     def create(self, record):
         self.initialize()
         with orm_session(self.pool, immediate=True) as session:
             model = self._model(record)
+            print(model)
             if session.get(TaskModel, model.task_id) is not None:
-                raise DuplicateTaskError(f"taskid 已存在: {model.task_id}，请查询已有任务；新立项请使用新的 taskid")
+                raise DuplicateTaskError(f"taskid 已经存在: {model.task_id}, 请查询已有任务; 新立项请使用新的 taskid")
             session.add(model)
             session.flush()
             saved = self._decode(model)
-        # 离开事务并提交成功后，才将数据返回给调用方。
         return saved
 
     @staticmethod
@@ -81,6 +84,7 @@ class TaskService:
         with orm_session(self.pool) as session:
             query = select(TaskModel).where(TaskModel.user_id == user_id).order_by(
                 TaskModel.created_at.desc(), TaskModel.task_id).limit(limit).offset(offset)
+
             return [self._decode(model) for model in session.scalars(query)]
 
     def update(self, task_id, user_id, **changes):
@@ -126,24 +130,33 @@ class TaskService:
                 'failed': '任务失败',
                 'cancelled': '任务已取消'
             }
+
             result = {
                 'task_id': task.task_id,
                 'status': labels.get(task.status, '任务状态未知'),
                 'status_code': task.status
             }
+
             if task.status == 'completed':
-                result['task_info'] = self._decode(task)
-                mode, columns = resolve_research_mode(result['task_info']['outline_snapshot'], task.research_type)
-                rows = session.scalars(select(TaskContentModel).where(
-                    TaskContentModel.task_id == task_id).order_by(
-                    TaskContentModel.created_at, TaskContentModel.content_id)).all()
-                result['contents'] = [{c.name: getattr(row, c.name)
+                task_info = self._decode(task)
+                mode, columns = resolve_research_mode(task_info['outline_snapshot'], task.research_type)
+                rows = session.scalars(
+                    select(TaskContentModel)
+                    .where(
+                        TaskContentModel.task_id == task_id
+                    )
+                    .order_by(
+                        TaskContentModel.created_at, TaskContentModel.content_id
+                    )
+                ).all()
+
+                contents = [{c.name: getattr(row, c.name)
                                        for c in TaskContentModel.__table__.columns} for row in rows]
-                for content in result['contents']:
+                for content in contents:
                     content['citations'] = decode_citations(content['citations'])
                     if mode == 'single_node':
                         content['table'] = json.loads(content['body'])
-                        if isinstance(content['table'], dict) and all(isinstance(v, list) for v in content['table'].values()):
+                        if not isinstance(content['table'], dict) and all(isinstance(v, list) for v in content['table'].values()):
                             from schemas.excel_content import parse_excel_content
                             table = parse_excel_content(content['body'])
                             content['table'] = {
@@ -154,36 +167,38 @@ class TaskService:
                                         'title': key,
                                         'level': 1,
                                         'content': values,
-                                        'source': [[] for _ in values]
+                                        'source': [[] for _ in values],
                                     } for key, values in table.items()
                                 ]
                             }
+
                         if not isinstance(content['table'], dict) or content['table'].get('columns') != columns:
-                            raise ValueError('已保存的大事记内容不是匹配表头的表格，需要重新生成')
-                order = self._outline_order(result['task_info']['outline_snapshot'])
-                result['contents'].sort(key=lambda row: order.get(row['section_id'], len(order)))
+                            raise ValueError('已保存的大事记内容不是匹配表头数据， 需要重新生成')
+
+                order = self._outline_order(task_info['outline_snapshot'])
+                contents.sort(key=lambda row: order.get(row['section_id'], len(order)))
+
+                for content in contents:
+                    content['citations'] = decode_citations(content['citations'])
+                    if task_info['outline_snapshot'].get('direction_model') == 'single_node':
+                        content['table'] = json.loads(content['body'])
+
                 from services.outline_service import fill
-                tree = result['task_info']['outline_snapshot'].get('tree', [])
-                result['directory_template'] = fill(tree, result['contents'])
+                tree = task_info['outline_snapshot'].get('tree', [])
+                result['directory_template'] = fill(tree, contents)
+
                 if mode == 'single_node':
                     from services.table_result import table_to_nodes
-                    if len(result['contents']) != 1:
-                        raise ValueError('大事记应包含一个完整表格结果')
-                    result['direction_model'] = 'single_node'
-                    result['taskid'] = task.task_id
-                    result['nodes'] = table_to_nodes(result['contents'][0]['table'])
-                    result['directory_template'] = result['nodes']
-                    result['contents'][0]['nodes'] = result['nodes']
-                result['content_count'] = len(result['contents'])
-                result['has_content'] = bool(result['contents'])
+                    if len(contents) != 1:
+                        raise ValueError('大事记应包含一个完整表格')
+                    result['directory_template'] = table_to_nodes(contents[0]['table'])
+                    contents[0]['nodes'] = result['directory_template']
+                result['content_count'] = len(contents)
+                result['has_content'] = bool(contents)
             return result
 
     @staticmethod
     def _outline_order(snapshot):
-        """仅用于展示排序，不对保存的模板做业务校验或修改。
-
-        无效节点、孤立节点或循环节点不影响正文返回，未匹配正文放末尾。
-        """
         nodes = snapshot.get('nodes', []) if isinstance(snapshot, dict) else []
         if not isinstance(nodes, list):
             return {}

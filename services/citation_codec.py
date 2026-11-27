@@ -1,7 +1,12 @@
-"""兼容文本列及已被 ORM/服务层解析的引用数组。"""
+# -*-coding : utf-8 -*-
+# @Author   : zhangtao
+# @FileName : citation_codec.py
+# @Desc     : 
+# @Time     : 2026/11/18 18:41
+# @Software : PyCharm
+
 import json
 from copy import deepcopy
-
 
 def decode_citations(value):
     if isinstance(value, (str, bytes, bytearray)):

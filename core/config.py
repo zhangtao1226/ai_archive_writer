@@ -1,81 +1,83 @@
-# -*-coding  : utf-8 -*-
-# @Author    : zhangtao
-# @File      : config.py
-# @Desc      : 配置加载与路径管理
-# @Time      : 2026/10/28 11:18
-# @Software  : PyCharm
+# -*-coding : utf-8 -*-
+# @Author   : zhangtao
+# @FileName : config.py
+# @Desc     : 
+# @Time     : 2026/11/9 11:23
+# @Software : PyCharm
 
+import os
 from pathlib import Path
-from typing import Literal
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
+load_dotenv(verbose=True)
 
 current_file_path = Path(__file__).resolve()
 root_path = current_file_path.parent.parent
 
-class Configs(BaseSettings):
+class Config(BaseSettings):
 
-    # 素材服务域名/端口，不含 /api/v1/public/materials/detail
-    material_api_base_url: str = ""
+    material_api_base_url: str = os.getenv("BASE_API_URL", "")
     material_contain_row: bool = True
     material_unlimited_row: int = Field(default=50, ge=1)
-    # 相对下载接口模板，支持 {attachment_id}，尚未提供协议时保持为空。
-    material_attachment_download_path: str = ""
+    material_api_url: str = os.getenv("MATERIAL_API_URL", "")
+    material_api_callback_url: str = os.getenv("MATERIAL_API_CALLBACK_URL", "")
+    material_attachment_download_path: str = os.getenv("MATERIAL_ATTACHMENT_DOWNLOAD_PATH", "")
     material_callback_retry_seconds: int = Field(default=60, ge=1)
-    material_api_key: str = "erren_lantai_2026"
-    material_api_token: str = ""  # 若上游使用 Bearer 鉴权则配置；空值不发送鉴权头
-    material_api_timeout_seconds: float = Field(default=30, gt=0)
-    material_attachment_root: str = ""  # Windows 示例：r"F:\save"
+    material_api_token: str = ""
+    material_api_api_key: str = "erren_lantai_2026"
+    material_attachment_root: str = ""
+    material_api_timeout_seconds: float = Field(default=30, ge=0)
     material_attachment_max_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
 
-    vllm_base_url: str = "http://127.0.0.1:8001/v1"
-    vllm_model_name: str = "Qwen3.8-27B"
+    vllm_base_url: str = os.getenv("VLLM_BASE_URL", "")
+    vllm_model_name: str = os.getenv("VLLM_MODEL_NAME", "")
     vllm_api_key: str = "EMPTY"
     vllm_timeout_seconds: float = Field(default=300, gt=0)
     chat_context_tokens: int = Field(default=4096, ge=512)
-    chat_max_tokens: int = Field(default=1024, ge=1)
+    chat_max_tokens: int = Field(default=2048, ge=1)
     vllm_max_tokens: int = Field(default=4096, ge=1)
     llm_context_max_chars: int = Field(default=20000, ge=1)
 
-    # 推理模型路径
-    llm_model_path: str = f"{root_path}/resources/models/"
-    #嵌入模型路径
-    embedding_model_path: str = f"{root_path}/resources/models/embeddings/Embedding_model"
+    # 嵌入模型路径
+    embedding_model_path:str = f"{root_path}/resources/models/Qwen3-Embedding-4B"
 
-    # 两阶段检索：先召回候选，再用交叉编码器重排序
+    # RAG 召回候选， 再用交叉编码器重排序
     rag_rerank_enabled: bool = True
-    rag_initial_k: int = Field(default=20, ge=1)
-    reranker_model_path: str = f"{root_path}/resources/models/BAAI/bge-reranker-v2-m3"
-    reranker_device: str = "cpu"
+    rag_initial_k: int = Field(default=10, ge=1)
+    reranker_model_path: str = f"{root_path}/resources/models/bge-reranker-v2-m3"
+    reranker_device: str = "cuda:0"
     reranker_batch_size: int = Field(default=16, ge=1)
 
-
-    # 业务数据地址
+    # 业务数据库地址
     application_db_path: str = f"{root_path}/resources/databases/application.db"
-    # 知识数据地址
+    # 知识库数据地址
     knowledge_db_path: str = f"{root_path}/resources/databases/chroma_db"
-    # 工作流检查点与恢复状态数据地址
+    # 工作流检查点
     checkpoint_db_path: str = f"{root_path}/resources/databases/checkpoint.db"
 
-    # 入库时间设置（北京时间，支持跨午夜，例如 23:00 到 06:00）
-    rag_scheduler_enabled: bool = False
-    start_time: str = "08:00"
-    end_time: str = "06:00"
-    rag_timezone: str = "Asia/Shanghai"
+    # RAG定时任务设置(支持跨午夜， 如：23：00 到 06：00)
+    rag_scheduler_enabled: bool = True
+    start_time:str = "08:00"
+    end_time:str = "06:00"
+    rag_timezone:str = "Asia/Shanghai"
     rag_scan_interval_seconds: int = Field(default=300, ge=1)
-    # 待入库的 TXT/Markdown 原始资料目录，启动时自动创建；与 Chroma 存储目录分开
-    rag_default_category_id: str = "unassigned"  # 目录扫描没有上游分类ID时的明确占位值
-    rag_source_dir: str = f"{root_path}/resources/knowledge"
-    embedding_device: str = "cpu"
 
-    # 日志文件配置信息
+    # 待入库的原始资料库（临时测试用）
+    rag_default_category_id: str = "unassigned"
+    rag_source_dir: str = f"{root_path}/resources/knowledge"
+    embedding_device: str = "cuda:0"
+
+    # 日志配置
     log_info: dict = {
         "log_name": "app",
         "log_level": "INFO",
         "log_dir": f"{root_path}/logs",
         "log_size": 50,
-        "log_retention": 7,
+        "log_retention": 7
     }
 
-configs = Configs()
+configs = Config()
+
+

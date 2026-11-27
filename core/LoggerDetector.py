@@ -1,27 +1,25 @@
-# -*-coding  : utf-8 -*-
-# @Author    : zhangtao
-# @File      : LoggerDetector.py
-# @Desc      :
-# @Time      : 2025/8/15 16:42
-# @Software  : PyCharm
+# -*-coding : utf-8 -*-
+# @Author   : zhangtao
+# @FileName : LoggerDetector.py
+# @Desc     : 
+# @Time     : 2026/11/9 13:39
+# @Software : PyCharm
 
 import os
 import re
 import glob
 import time
 import logging
+from operator import index
 from pathlib import Path
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 
 from core.config import configs
 
-class SizeAndTimeRotatingHandler(TimedRotatingFileHandler):
-    def __init__(self, filename, when='M', interval=1, backupCount=7, maxBytes=10 * 1024 * 1024,
-                 encoding='utf-8', delay=False, utc=False):
-
-        super().__init__(filename, when=when, interval=interval, backupCount=backupCount, encoding=encoding,
-                         delay=delay, utc=utc)
+class LoggerDetector(TimedRotatingFileHandler):
+    def __init__(self, filename, when="M", interval=1, backupCount=7, maxBytes=10*1024*1024, encoding="utf-8", delay=False, utc=False):
+        super().__init__(filename, when=when, interval=interval, backupCount=backupCount, encoding=encoding, delay=delay, utc=utc)
 
         self.maxBytes = maxBytes
         self.suffix = "%Y-%m-%d"
@@ -59,7 +57,6 @@ class SizeAndTimeRotatingHandler(TimedRotatingFileHandler):
                 new_filename = f"{new_filename}.{index}"
             else:
                 new_filename = f"{new_filename.rsplit('.', 1)[0]}.{index}"
-
             index += 1
 
         try:
@@ -91,7 +88,7 @@ class SizeAndTimeRotatingHandler(TimedRotatingFileHandler):
                     log_files.remove(file_path)
                     continue
             except Exception as e:
-                print(f"清理日志文件失败; {file_path}: {e}")
+                print(f"清理日志文件失败: {file_path}: {e}")
 
         retain_files = log_files[-self.backupCount:]
         for file_path in log_files:
@@ -99,7 +96,7 @@ class SizeAndTimeRotatingHandler(TimedRotatingFileHandler):
                 try:
                     os.remove(file_path)
                 except Exception as e:
-                    print(f"清理日志文件失败; {file_path}:{e}")
+                    print(f"清理日志文件失败: {file_path}: {e}")
 
 def setup_logger(log_dir="logs", log_name="app", max_log_size=10, retention_days=7):
     Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -113,15 +110,15 @@ def setup_logger(log_dir="logs", log_name="app", max_log_size=10, retention_days
 
     log_formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    file_handler = SizeAndTimeRotatingHandler(
+    file_handler = LoggerDetector(
         filename=log_file_path,
         when="midnight",
         backupCount=retention_days,
         maxBytes=max_log_size * 1024 * 1024,
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     file_handler.setFormatter(log_formatter)
@@ -134,7 +131,7 @@ def setup_logger(log_dir="logs", log_name="app", max_log_size=10, retention_days
 
     return logger
 
-if configs and hasattr(configs, 'log_info'):
+if configs and hasattr(configs, "log_info"):
     log_config = configs.log_info
     logger = setup_logger(
         log_dir=log_config.get("log_dir", "logs"),
@@ -142,5 +139,6 @@ if configs and hasattr(configs, 'log_info'):
         retention_days=log_config.get("retention_days", 7),
         max_log_size=log_config.get("max_log_size", 10),
     )
+
 else:
-    logger = setup_logger(log_dir='logs', log_name='app', retention_days=7, max_log_size=10)
+    logger = setup_logger(log_dir="logs", log_name="app", retention_days=7, max_log_size=10)

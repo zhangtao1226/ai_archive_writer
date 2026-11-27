@@ -5,13 +5,14 @@
 # @Time      : 2026/11/6 10:50
 # @Software  : PyCharm
 import json
-from services.citation_codec import decode_citations
-from datetime import datetime, timezone
 from uuid import uuid4
+from datetime import datetime, timezone
 from sqlalchemy import select, inspect
+
 from core.db import get_database_pool, orm_session
 from models.task_model import TaskModel
 from models.task_content_model import TaskContentModel
+from services.citation_codec import decode_citations
 
 
 class TaskContentService:

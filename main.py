@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException, Query
 from pydantic import ValidationError
 from sqlite3 import Error as SQLiteError
 from sqlalchemy.exc import SQLAlchemyError
-
+from sqlalchemy.util import await_
 
 from core.config import configs
 from core.db import close_database_pools
@@ -25,11 +25,11 @@ from schemas.EditingResearchRequest import EditingResearchRequest
 from schemas.ChatRequest import ChatRequest, TextChatRequest
 from services.chat_stream import sse
 from services.project_service import create_project
-from services.research_parameter_adapter import normalize_research_request
 from services.task_service import TaskService, DuplicateTaskError
 from services.task_content_service import TaskContentService
 from services.chat_service import ChatService
 from services.generation_service import GenerationWorker
+from services.research_paramenter_adapter import normalize_research_request
 
 @asynccontextmanager
 async def lifespan(app):
@@ -55,10 +55,12 @@ async def lifespan(app):
             await asyncio.to_thread(close_database_pools)
 
 
-
-app = FastAPI(lifespan=lifespan, title="AI 档案编研系统",
-              description="档案编研任务、资料管理、正文生成与成果导出服务。",
-              version="1.0.0",)
+app = FastAPI(
+        lifespan=lifespan,
+        title="AI 档案编研系统",
+        description="档案编研任务、资料管理、正文生成与成果导出服务。",
+        version="1.0.0",
+    )
 
 
 @app.get("/")
@@ -83,18 +85,24 @@ async def editing_research(request: Request):
         context = {key: getattr(request.state, key, None) for key in ('user_id', 'person', 'group')}
         json_data = normalize_research_request(json_data, context)
     except ValidationError as exc:
-        return ResponseUtil.error(code=422, message="立项参数校验失败",
-            details={"errors": exc.errors(include_context=False, include_input=False)})
+        return ResponseUtil.error(
+            code=422,
+            message='立项参数校验失败',
+            details={"errors": exc.errors(include_context=False, include_input=False)}
+        )
     except ValueError as exc:
         return ResponseUtil.error(code=422, message=str(exc))
 
-    required = ("taskid", "title", "type", "directory_template") if is_new_format else (
-        "user_id", "title", "type", "person", "group", "directory_template")
+    required = ('taskid', 'title', 'type', 'directory_template') if is_new_format else (
+        'user_id', 'title', 'type', 'person', 'directory_template'
+    )
     missing = [key for key in required if key not in json_data or json_data[key] is None
                or (isinstance(json_data[key], str) and not json_data[key].strip())]
     if missing:
+        logger.error(f"缺少必要参数: {', '.join(missing)}")
         return ResponseUtil.error(message=f"缺少必要参数: {', '.join(missing)}")
     try:
+
         parameters = EditingResearchRequest.model_validate(json_data)
     except ValidationError as exc:
         return ResponseUtil.error(
@@ -106,14 +114,18 @@ async def editing_research(request: Request):
         project = await asyncio.to_thread(create_project, parameters, configs)
     except DuplicateTaskError as exc:
         return ResponseUtil.error(code=409, message=str(exc))
+
     except (SQLAlchemyError, SQLiteError, TimeoutError):
         logger.exception("编研立项保存失败")
         return ResponseUtil.error(code=503, message="立项保存失败，请稍后重试")
+
     except (OSError, ValidationError):
         logger.exception("立项保存参数或存储不可用")
         return ResponseUtil.error(code=503, message="立项保存失败，参数或存储不可用")
+
     except ValueError as exc:
         return ResponseUtil.error(message=str(exc))
+
     return ResponseUtil.success(data=project, message="立项已保存，任务已排队")
 
 @app.get("/v1/tasks_info/{task_id}")
@@ -135,9 +147,8 @@ async def get_tasks_info(task_id: str):
 
 
 def chat_user(user_id: str):
-    """接收 Java 传入的用户标识用于会话隔离，不执行登录或分配权限校验。"""
     if not user_id.strip():
-        raise HTTPException(status_code=422, detail="user_id 不能为空")
+        raise HTTPException(status_code=422, detail="user_id 不能为空！")
     return user_id
 
 
@@ -145,6 +156,7 @@ async def call_chat_service(request, method, *args):
     """在线程中调用同步服务并统一转换业务异常。"""
     try:
         result = await asyncio.to_thread(getattr(request.app.state.chat_service, method), *args)
+        print(f"result: {result}")
         return ResponseUtil.success(data=result)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -157,10 +169,10 @@ async def call_chat_service(request, method, *args):
 
 @app.post("/v1/chat")
 async def chat(payload: TextChatRequest, request: Request):
-    """按用户、任务和节点恢复会话，以当前编辑文本执行流式修改。"""
     user_id = payload.user_id
     try:
-        chat_request = await asyncio.to_thread(request.app.state.chat_service.prepare_text_request, payload)
+        payload = await asyncio.to_thread(request.app.state.chat_service.prepare_text_request, payload)
+
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
@@ -182,7 +194,7 @@ async def chat(payload: TextChatRequest, request: Request):
     def generate():
         """在线程中运行同步检索及推理，异常转为 SSE error。"""
         try:
-            result = request.app.state.chat_service.chat(chat_request, user_id, emit, cancelled)
+            result = request.app.state.chat_service.chat(payload, user_id, emit, cancelled)
             emit('done' if result['status'] == 'completed' else 'status', result)
         except Exception:
             logger.exception('流式对话失败')
@@ -197,11 +209,11 @@ async def chat(payload: TextChatRequest, request: Request):
             yield sse(
                 'start',
                 {
-                    'task_id':payload.task_id,
-                    'node_id':payload.node_id,
-                    'user_id':user_id,
-                    'conversation_id':chat_request.conversation_id,
-                    'request_id':chat_request.request_id
+                    'task_id': payload.task_id,
+                    'node_id': payload.section_id,
+                    'user_id': user_id,
+                    'conversation_id':payload.conversation_id,
+                    'request_id':payload.request_id,
                 }
             )
             while True:
@@ -225,36 +237,28 @@ async def chat(payload: TextChatRequest, request: Request):
         headers={'Cache-Control':'no-cache', 'X-Accel-Buffering':'no'}
     )
 
-
-@app.post("/v1/tasks/{task_id}/sections/{section_id}/conversations")
-async def create_conversation(task_id: str, section_id: str, request: Request, user_id: str = Depends(chat_user)):
-    """创建或恢复指定用户的章节会话，user_id 通过查询参数传入。"""
-    return await call_chat_service(request, 'create_conversation', task_id, section_id, user_id)
-
-
 @app.get("/v1/chat/history")
-async def chat_history_rounds(
-    request: Request,
-    task_id: str = Query(..., min_length=1),
-    section_id: str = Query(..., min_length=1),
-    user_id: str = Query(..., min_length=1),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+async def chat_history(
+        request: Request,
+        task_id: str = Query(..., min_length=1),
+        node_id: str = Query(..., min_length=1),
+        user_id: str = Query(..., min_length=1),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(5, ge=1),
 ):
-    """查询指定任务、章节、用户的历史，按完整轮次倒序分页。"""
-    return await call_chat_service(request, 'history_rounds', task_id, section_id, user_id, page, page_size)
+    """
 
+    :param request:
+    :param task_id: 任务ID
+    :param node_id: 节点ID
+    :param user_id: 用户ID
+    :param page: 页码
+    :param page_size: 对话轮次数
+    :return:
+    """
+    print(f"task_id = {task_id}, node_id = {node_id}, user_id = {user_id}, page = {page}, page_size = {page_size}")
+    return await call_chat_service(request, 'history_rounds', task_id, node_id, user_id, page, page_size)
 
-@app.get("/v1/conversations/{conversation_id}/messages")
-async def chat_history(conversation_id: str, request: Request, after: int = 0, limit: int = 50, user_id: str = Depends(chat_user)):
-    """分页返回指定会话的历史消息。"""
-    return await call_chat_service(request, 'history', conversation_id, user_id, after, limit)
-
-
-@app.post("/v1/chat/proposals/{proposal_id}/apply")
-async def apply_proposal(proposal_id: str, request: Request, user_id: str = Depends(chat_user)):
-    """应用 AI 建议，检查会话归属及正文版本；权限由 Java 校验。"""
-    return await call_chat_service(request, 'apply', proposal_id, user_id)
 
 
 if __name__ == '__main__':

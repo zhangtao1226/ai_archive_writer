@@ -4,7 +4,7 @@
 # @Desc      :
 # @Time      : 2025/8/15 16:42
 # @Software  : PyCharm
-
+from __future__ import annotations
 from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -78,18 +78,16 @@ class DirectoryNode(BaseModel):
     node_id: Text
     node_title: Text
     content: str = ''
-    children: list['DirectoryNode'] = Field(default_factory=list)
+    children: list["DirectoryNode"] = Field(default_factory=list)
     generate_content: bool = True
-
 
 class EditingResearchRequest(BaseModel):
     model_config = ConfigDict(strict=True, str_strip_whitespace=True, extra='forbid')
-    # 新接口允许缺省身份信息；旧接口仍在入口校验必填字段。
     taskid: Text | None = None
     user_id: Text | None = None
     title: Text
     type: Text
-    person: Text | None = Field(default=None, description='责任人用户 ID，不参与语义检索')
+    person: Text | None = Field(default='', description='责任人用户 ID，暂不用')
     group: Text | None = None
     directory_template: list[DirectoryNode] = Field(min_length=1)
     time_range: str = Field(default='', max_length=200)
@@ -106,9 +104,9 @@ class EditingResearchRequest(BaseModel):
         while stack:
             node, depth = stack.pop()
             if node.node_id in seen:
-                raise ValueError('目录节点 ID 必须全局唯一')
+                raise ValueError("目录节点 ID 必须全局唯一")
             seen.add(node.node_id)
             if depth > 20 or len(seen) > 500:
-                raise ValueError('目录最多20层、500个节点')
+                raise ValueError("目录最多20层、500个节点")
             stack.extend((child, depth + 1) for child in node.children)
         return self
