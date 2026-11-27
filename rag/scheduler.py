@@ -9,7 +9,6 @@ import json
 from services.material_vector_service import MaterialVectorService
 from datetime import datetime, time
 from hashlib import sha256
-from pathlib import Path
 from threading import Event, Thread
 from zoneinfo import ZoneInfo
 
@@ -41,9 +40,8 @@ class IngestionScheduler:
             datetime.now(self.zone).time(), self.start_time, self.end_time)
 
     def start(self):
-        source_dir = Path(self.config.rag_source_dir).expanduser()
-        source_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("知识库资料目录：{}", source_dir.resolve())
+        if not self.config.material_api_base_url:
+            raise ValueError('定时入库需要配置 material_api_base_url')
         self.thread.start()
 
     def stop(self):
@@ -60,47 +58,74 @@ class IngestionScheduler:
             self.stop_event.wait(self.config.rag_scan_interval_seconds)
 
     def scan(self):
-        source_dir = Path(self.config.rag_source_dir).expanduser()
-        if not source_dir.is_dir():
-            logger.warning("知识库资料目录不存在：{}", source_dir)
-            return
+        from services.material_catalog_service import MaterialCatalogClient, iter_materials, material_text
+        from services.material_callback_service import MaterialCallbackService
+        from urllib.parse import quote
+        callbacks = MaterialCallbackService(self.config)
         self.records.initialize()
-        signature = sha256(json.dumps({"model": self.config.embedding_model_path,
-            "chunk_size": 800, "overlap": 120, "parser_version": 1,
-            "collection": "archive_knowledge"}, sort_keys=True).encode()).hexdigest()
-        for path in sorted(source_dir.rglob("*")):
-            if not self.allowed():
-                break
-            if any(part.startswith('._') or part == '__MACOSX' for part in path.relative_to(source_dir).parts):
-                continue
-            if not path.is_file() or path.suffix.lower() not in {".txt", ".md", ".pdf", ".docx"}:
-                continue
-            record = None
-            try:
-                source = str(path.resolve())
-                data = path.read_bytes()
-                digest = sha256(data).hexdigest()
-                record = self.records.claim(source, digest, signature,
-                    getattr(self.config, 'rag_default_category_id', 'unassigned'))
-                if record is None:
-                    continue
-                def can_continue():
-                    return self.allowed() and self.records.active(record['id'])
-                if not can_continue():
-                    raise InterruptedError('入库窗口结束或记录被停用')
-                text = extract_text(data, path.suffix)
-                if self.kb is None:
-                    from rag.indexing import KnowledgeBase
-                    self.kb = KnowledgeBase()
-                info = self.kb.write(text, source=source, metadata={
-                    'category_id': record['category_id'], 'ingestion_id': record['id'],
-                    'content_hash': digest}, should_continue=can_continue, return_info=True)
-                self.records.finish(record['id'], 'completed', info=info)
-                logger.info(f"资料入库处理结束：{source}")
-            except InterruptedError as exc:
-                if record:
-                    self.records.finish(record['id'], 'interrupted', error=str(exc))
-            except Exception as exc:
-                if record:
-                    self.records.finish(record['id'], 'failed', error=str(exc))
-                logger.exception(f"资料入库未完成：{path}")
+        callbacks.initialize()
+        signature = sha256(json.dumps({'model':self.config.embedding_model_path,'chunk_size':800,
+            'overlap':120,'parser_version':2},sort_keys=True).encode()).hexdigest()
+        with MaterialCatalogClient(self.config) as api:
+            callbacks.flush(api,self.allowed)
+            materials = list(iter_materials(api.categories()))
+            for category, info, material in materials:
+                if not self.allowed(): break
+                base = 'material://' + quote(category,safe='') + '/' + quote(material['id'],safe='')
+                versions = []
+                errors = []
+                interrupted = False
+                metadata = {'category_id':category,'material_id':material['id'],
+                    'catalog_path':info.get('catalog_path',''), 'title':material.get('tm',''),
+                    'archive_code':material.get('dh','')}
+                def ingest(data, suffix, source, meta):
+                    digest=sha256(data).hexdigest()
+                    versions.append((source,digest))
+                    record=self.records.claim(source,digest,signature,category)
+                    if record is None:
+                        if self.records.completed(source,digest,signature): return
+                        raise InterruptedError('素材已停用、删除或由其他任务处理')
+                    try:
+                        def allowed(): return self.allowed() and self.records.active(record['id'])
+                        if not allowed(): raise InterruptedError('入库窗口结束')
+                        text=extract_text(data,suffix)
+                        if self.kb is None:
+                            from rag.indexing import KnowledgeBase
+                            self.kb=KnowledgeBase()
+                        old_ids = self.kb.collection.get(where={'source':source})['ids']
+                        vector_info=self.kb.write(text,source=source,metadata={**meta,
+                            'ingestion_id':record['id'],'content_hash':digest},should_continue=allowed,return_info=True)
+                        stale = sorted(set(old_ids) - set(vector_info['chunk_ids']))
+                        if stale:
+                            self.kb.collection.delete(ids=stale)
+                        self.records.finish(record['id'],'completed',info=vector_info)
+                        if not self.records.completed(source,digest,signature): raise InterruptedError('素材状态变化')
+                    except InterruptedError as exc:
+                        self.records.finish(record['id'],'interrupted',error=str(exc)); raise
+                    except Exception as exc:
+                        self.records.finish(record['id'],'failed',error=str(exc)); raise
+                try:
+                    ingest(material_text(info,material).encode(),'.txt',base+'/description',
+                           {**metadata,'source_type':'description'})
+                except InterruptedError: interrupted=True
+                except Exception as exc: errors.append(str(exc))
+                attachments=material.get('attachments') or []
+                if not isinstance(attachments,list):
+                    errors.append('attachments 必须为数组'); attachments=[]
+                for attachment in attachments:
+                    if interrupted or not self.allowed(): interrupted=True; break
+                    try:
+                        if not isinstance(attachment,dict) or not attachment.get('attachment_id'):
+                            raise ValueError('附件缺少 attachment_id')
+                        data=api.attachment(attachment,self.allowed)
+                        ingest(data,'.'+attachment.get('file_ext','').lower().lstrip('.'),
+                            base+'/attachment/'+quote(attachment['attachment_id'],safe=''),
+                            {**metadata,'source_type':'attachment','attachment_id':attachment['attachment_id'],
+                             'file_name':attachment.get('file_name','')})
+                    except InterruptedError: interrupted=True; break
+                    except Exception as exc: errors.append(str(exc))
+                if interrupted: continue
+                version=sha256(json.dumps([material,versions,signature],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+                callbacks.enqueue(category,material['id'],version,not errors)
+                if errors: logger.error(f'素材入库失败 category_id={category} material_id={material["id"]} errors={errors}')
+                callbacks.flush(api,self.allowed)

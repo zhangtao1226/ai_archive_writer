@@ -18,6 +18,12 @@ class Configs(BaseSettings):
 
     # 素材服务域名/端口，不含 /api/v1/public/materials/detail
     material_api_base_url: str = ""
+    material_contain_row: bool = True
+    material_unlimited_row: int = Field(default=50, ge=1)
+    # 相对下载接口模板，支持 {attachment_id}，尚未提供协议时保持为空。
+    material_attachment_download_path: str = ""
+    material_callback_retry_seconds: int = Field(default=60, ge=1)
+    material_api_key: str = "erren_lantai_2026"
     material_api_token: str = ""  # 若上游使用 Bearer 鉴权则配置；空值不发送鉴权头
     material_api_timeout_seconds: float = Field(default=30, gt=0)
     material_attachment_root: str = ""  # Windows 示例：r"F:\save"
@@ -57,7 +63,7 @@ class Configs(BaseSettings):
     start_time: str = "08:00"
     end_time: str = "06:00"
     rag_timezone: str = "Asia/Shanghai"
-    rag_scan_interval_seconds: int = Field(default=60, ge=1)
+    rag_scan_interval_seconds: int = Field(default=300, ge=1)
     # 待入库的 TXT/Markdown 原始资料目录，启动时自动创建；与 Chroma 存储目录分开
     rag_default_category_id: str = "unassigned"  # 目录扫描没有上游分类ID时的明确占位值
     rag_source_dir: str = f"{root_path}/resources/knowledge"

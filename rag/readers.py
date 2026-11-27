@@ -15,6 +15,22 @@ def extract_text(data: bytes, suffix: str) -> str:
     elif suffix == '.pdf':
         from pypdf import PdfReader
         text = '\n\n'.join(page.extract_text() or '' for page in PdfReader(BytesIO(data)).pages)
+    elif suffix == '.xls':
+        import xlrd
+        book = xlrd.open_workbook(file_contents=data)
+        try:
+            text = '\n'.join(sheet.name + '\n' + '\n'.join(
+                '\t'.join(str(v) for v in sheet.row_values(i)) for i in range(sheet.nrows)) for sheet in book.sheets())
+        finally:
+            book.release_resources()
+    elif suffix == '.xlsx':
+        from openpyxl import load_workbook
+        book = load_workbook(BytesIO(data), read_only=True, data_only=True)
+        try:
+            text = '\n'.join(sheet.title + '\n' + '\n'.join(
+                '\t'.join('' if v is None else str(v) for v in row) for row in sheet.iter_rows(values_only=True)) for sheet in book)
+        finally:
+            book.close()
     elif suffix == '.docx':
         from docx import Document
         doc = Document(BytesIO(data))

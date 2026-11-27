@@ -62,3 +62,10 @@ class MaterialVectorService:
                 row.vector_info = json.dumps(info, ensure_ascii=False)
             row.completed_at = utc_now() if status == 'completed' else None
             row.updated_at = utc_now()
+
+    def completed(self, source, digest, signature):
+        with orm_session(self.pool) as session:
+            rows = session.scalars(select(MaterialVectorModel).where(MaterialVectorModel.source_path == source)).all()
+            if any(r.is_deleted or not r.enabled or r.status == 'running' for r in rows):
+                return False
+            return any(r.content_hash == digest and r.index_signature == signature and r.status == 'completed' for r in rows)
